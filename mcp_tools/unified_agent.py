@@ -56,12 +56,12 @@ class UnifiedAgent:
             "3. If user confirms (says 'yes', 'proceed', 'go ahead', 'buy them'), extract the ingredient NAMES from the plan result (the 'ingredients' array, use the 'name' field of each ingredient). "
             "Then use search_items_for_cart tool with a list of those ingredient names (as strings) to search for them.\n"
             "4. After search_items_for_cart completes, the tool returns a dict with 'found_items' array and 'skipped' list. "
+            "The search_items_for_cart result is a dict like: {'found_items': [{'id': 'blk-101', 'name': 'Chicken', 'price': 320, 'quantity': 1}, ...], 'skipped': [...]}. "
             "Display the found items in a formatted table showing: item name, price, quantity, and total from the 'found_items' array. "
             "Also mention any items that were not found (from the 'skipped' list). Then STOP and ask: 'Would you like me to add these items to your cart?' Wait for user confirmation.\n"
-            "5. If user confirms adding to cart (says 'yes', 'add them', 'proceed'), you MUST use the EXACT 'found_items' array from the search_items_for_cart tool result. "
-            "The search_items_for_cart result is a dict like: {'found_items': [{'id': 'blk-101', 'name': 'Chicken', 'price': 320, 'quantity': 1}, ...], 'skipped': [...]}. "
-            "Extract the 'found_items' array and pass it DIRECTLY to add_items_to_cart_by_ids. "
-            "DO NOT create new items, DO NOT use placeholder IDs like 'blk-001', 'blk-002'. Use ONLY the actual IDs from 'found_items'.\n"
+            "5. If user confirms adding to cart (says 'yes', 'add them', 'proceed'), use add_items_to_cart_by_ids with the items from the search results. "
+            "You can use the 'found_items' array from the search_items_for_cart result, or construct items with the IDs and quantities from the search results. "
+            "Each item should have at least 'id' (like 'blk-101') and 'quantity' fields. Use the actual item IDs from the search results, not placeholder IDs.\n"
             "6. After add_items_to_cart_by_ids completes, show the cart summary from the result and STOP. Ask: 'Would you like to add more items or proceed to checkout?'\n"
             "7. If user says 'proceed to checkout', 'checkout', 'pay', 'proceed to payment', or similar, first call view_cart to get the cart total, then use create_payment with the amount (order_id is optional, will be auto-generated), then immediately call check_payment_status with the payment_id from create_payment result to complete the transaction.\n"
             "8. If user wants to add more items, let them specify the item names and use search_items_for_cart again, then add_items_to_cart_by_ids after confirmation.\n"
@@ -198,6 +198,9 @@ class UnifiedAgent:
             import time
             start_time = time.time()
             self.log.info("🔍 TOOL CALL: search_items_for_cart(%d items)", len(item_names))
+            self.log.debug("Item names: %s", item_names)
+            self.log.debug("Quantities: %s", quantities)
+            
             try:
                 await self._ensure_blinkit()
                 
@@ -206,47 +209,72 @@ class UnifiedAgent:
                 
                 # Search each item sequentially (like _pick_and_add) - faster than parallel chunking
                 for idx, item_name in enumerate(item_names):
+                    self.log.debug("Processing item %d/%d: %s", idx + 1, len(item_names), item_name)
                     name = item_name.strip()
                     queries = [name]
                     key = name.lower()
+                    
+                    # Check for aliases
                     if key in self.search_aliases:
-                        queries.extend(self.search_aliases[key])
+                        aliases = self.search_aliases[key]
+                        queries.extend(aliases)
+                        self.log.debug("  Found aliases for '%s': %s", name, aliases)
+                    else:
+                        self.log.debug("  No aliases found for '%s'", name)
+                    
+                    self.log.debug("  Search queries to try: %s", queries)
                     
                     items = []
                     tried = []
                     for q in queries:
                         self.log.info("Searching Blinkit for: %s", q)
                         tried.append(q)
-                        resp = await self.blinkit_client.call_tool("blinkit.search", {"query": q, "limit": 3})
-                        found = json.loads(resp["content"][0]["text"])
-                        if found:
-                            items = found
-                            break
+                        try:
+                            resp = await self.blinkit_client.call_tool("blinkit.search", {"query": q, "limit": 3})
+                            found = json.loads(resp["content"][0]["text"])
+                            if found:
+                                items = found
+                                self.log.debug("  ✅ Found %d result(s) for query '%s'", len(found), q)
+                                break
+                            else:
+                                self.log.debug("  ⚠️  No results for query '%s'", q)
+                        except Exception as search_error:
+                            self.log.warning("  ❌ Search error for query '%s': %s", q, str(search_error))
                     
                     if not items:
-                        self.log.warning("No results for item after tries %s", tried)
+                        self.log.warning("⚠️  No results for item '%s' after trying queries: %s", name, tried)
                         skipped.append(name)
                         continue
                     
                     choice = items[0]
-                    qty = quantities[idx] if quantities and idx < len(quantities) else 1
-                    qty = max(1, qty)
+                    original_qty = quantities[idx] if quantities and idx < len(quantities) else 1
+                    qty = max(1, original_qty)
+                    
                     # Clamp to stock and sensible upper bound
                     stock = choice.get("stock", qty)
+                    original_qty_for_clamp = qty
                     qty = min(qty, stock, 5)
                     
-                    found_items.append({
+                    if qty != original_qty_for_clamp:
+                        self.log.debug("  Quantity clamped: %d -> %d (stock=%d, max=5)", original_qty_for_clamp, qty, stock)
+                    
+                    found_item = {
                         "id": choice["id"],
                         "name": choice.get("name"),
                         "price": choice.get("price", 0),
                         "quantity": qty,
                         "original_name": name
-                    })
-                    self.log.info("Found: %s x%d (%s)", choice.get("name"), qty, choice.get("id"))
+                    }
+                    found_items.append(found_item)
+                    self.log.info("✅ Found: %s x%d (%s) - ₹%.2f", choice.get("name"), qty, choice.get("id"), choice.get("price", 0))
+                    self.log.debug("  Item details: %s", found_item)
                 
                 elapsed = time.time() - start_time
                 self.log.info("✅ TOOL SUCCESS: search_items_for_cart - %d found, %d skipped (took %.2fs)",
                              len(found_items), len(skipped), elapsed)
+                self.log.debug("Found items summary: %s", [{"id": item["id"], "name": item["name"], "qty": item["quantity"]} for item in found_items])
+                if skipped:
+                    self.log.debug("Skipped items: %s", skipped)
                 
                 return {
                     "found_items": found_items,
@@ -256,16 +284,22 @@ class UnifiedAgent:
             except Exception as e:
                 elapsed = time.time() - start_time
                 self.log.error("❌ TOOL ERROR: search_items_for_cart failed after %.2fs - %s", elapsed, str(e))
+                import traceback
+                self.log.debug("Traceback: %s", traceback.format_exc())
                 raise
 
-        async def add_items_to_cart_by_ids(ctx: RunContext, items: Annotated[list[dict], "List of items to add, each with 'id' and 'quantity'. IMPORTANT: Use the exact 'found_items' array from search_items_for_cart result, do not create new items."]):
+        async def add_items_to_cart_by_ids(ctx: RunContext, items: Annotated[list[dict], "List of items to add to cart. Each item should be a dict with at least 'id' (product ID like 'blk-101') and 'quantity' (number). Optional fields: 'name', 'price'. You can use items from search_items_for_cart results or construct them with the IDs from search results."]):
             """Add multiple items to cart by their IDs (after user confirms search results).
             
             Use this after search_items_for_cart when user confirms they want to add items.
-            CRITICAL: Pass the EXACT 'found_items' array from the search_items_for_cart result. 
-            Each item should have: {'id': 'blk-xxx', 'quantity': N, 'name': '...', 'price': ...}
-            Do NOT create new items or use placeholder IDs. Use the exact IDs from the search result.
-            Uses the same fast sequential method as _pick_and_add.
+            Each item should be a dict with:
+            - 'id' (required): Product ID from search results (e.g., 'blk-101', 'blk-029')
+            - 'quantity' (required): Number of items to add (defaults to 1 if not provided)
+            - 'name' (optional): Item name for reference
+            - 'price' (optional): Item price for reference
+            
+            You can pass the 'found_items' array from search_items_for_cart, or construct items using the IDs from the search results.
+            Uses sequential processing for reliability.
             """
             import time
             start_time = time.time()
@@ -274,7 +308,14 @@ class UnifiedAgent:
             # Log what we received for debugging
             received_ids = [item.get("id", "NO_ID") for item in items]
             self.log.info("📋 Received items with IDs: %s", received_ids)
-            self.log.debug("Full received items: %s", items)
+            self.log.debug("Full received items structure: %s", items)
+            
+            # Validate structure
+            for idx, item in enumerate(items):
+                if not isinstance(item, dict):
+                    self.log.warning("⚠️  Item %d is not a dict: %s", idx, type(item))
+                elif "id" not in item:
+                    self.log.warning("⚠️  Item %d missing 'id' field: %s", idx, item)
             
             try:
                 await self._ensure_blinkit()
@@ -282,37 +323,126 @@ class UnifiedAgent:
                 successful = []
                 failed = []
                 
+                self.log.debug("Starting sequential add process for %d items", len(items))
+                self.log.info("⏱️  Starting to add %d items to cart (sequential mode)", len(items))
+                
+                # Track timing for each item
+                item_timings = []
+                
                 # Add items sequentially (like _pick_and_add) - faster and more reliable
-                for item in items:
+                for idx, item in enumerate(items):
+                    item_start = time.time()
+                    self.log.debug("Processing item %d/%d: %s", idx + 1, len(items), item)
                     item_id = item.get("id")
-                    quantity = max(1, item.get("quantity", 1))
+                    original_quantity = item.get("quantity", 1)
+                    quantity = max(1, original_quantity)
                     item_name = item.get("name", "Unknown")
+                    item_price = item.get("price", 0)
+                    
+                    self.log.debug("  Item details: id=%s, name=%s, qty=%d (original=%d), price=₹%.2f", 
+                                  item_id, item_name, quantity, original_quantity, item_price)
                     
                     # Validate that we have a proper ID
-                    if not item_id or not item_id.startswith("blk-"):
-                        self.log.error("❌ Invalid item ID: %s. Item: %s", item_id, item)
-                        failed.append({"item": item, "error": f"Invalid ID: {item_id}"})
+                    if not item_id:
+                        self.log.error("❌ Missing item ID for item %d: %s", idx, item)
+                        failed.append({"item": item, "error": "Missing ID"})
+                        item_timings.append({"item": item_name, "time": time.time() - item_start, "status": "failed", "reason": "Missing ID"})
+                        continue
+                    
+                    if not item_id.startswith("blk-"):
+                        self.log.error("❌ Invalid item ID format: '%s' (expected 'blk-xxx'). Item: %s", item_id, item)
+                        failed.append({"item": item, "error": f"Invalid ID format: {item_id}"})
+                        item_timings.append({"item": item_name, "time": time.time() - item_start, "status": "failed", "reason": "Invalid ID"})
                         continue
                     
                     try:
+                        self.log.debug("  📞 Calling blinkit.add_to_cart with id=%s, quantity=%d", item_id, quantity)
+                        mcp_call_start = time.time()
                         added = await self.blinkit_client.call_tool(
                             "blinkit.add_to_cart", {"id": item_id, "quantity": quantity}
                         )
+                        mcp_call_time = time.time() - mcp_call_start
+                        
+                        parse_start = time.time()
                         entry = json.loads(added["content"][0]["text"])
+                        parse_time = time.time() - parse_start
+                        
                         added_item_name = entry.get("item", {}).get("name", item_id)
-                        self.log.info("✅ Added: %s x%d (%s)", added_item_name, entry.get("quantity", quantity), item_id)
+                        added_qty = entry.get("quantity", quantity)
+                        added_price = entry.get("item", {}).get("price", 0)
+                        
+                        item_total_time = time.time() - item_start
+                        item_timings.append({
+                            "item": added_item_name,
+                            "time": item_total_time,
+                            "mcp_time": mcp_call_time,
+                            "parse_time": parse_time,
+                            "status": "success"
+                        })
+                        
+                        self.log.info("✅ Added: %s x%d (%s) - ₹%.2f | ⏱️  Total: %.2fs (MCP: %.2fs, Parse: %.3fs)", 
+                                     added_item_name, added_qty, item_id, added_price, 
+                                     item_total_time, mcp_call_time, parse_time)
+                        self.log.debug("  Cart entry: %s", entry)
                         successful.append(entry)
                     except Exception as e:
-                        self.log.warning("Failed to add item %s: %s", item_id, str(e))
-                        failed.append({"item": {"id": item_id, "quantity": quantity}, "error": str(e)})
+                        item_total_time = time.time() - item_start
+                        item_timings.append({
+                            "item": item_name,
+                            "time": item_total_time,
+                            "status": "failed",
+                            "error": str(e)
+                        })
+                        self.log.warning("⚠️  Failed to add item %s (qty=%d) after %.2fs: %s", item_id, quantity, item_total_time, str(e))
+                        self.log.debug("  Error details: %s", str(e))
+                        import traceback
+                        self.log.debug("  Traceback: %s", traceback.format_exc())
+                        failed.append({"item": {"id": item_id, "quantity": quantity, "name": item_name}, "error": str(e)})
 
                 elapsed = time.time() - start_time
+                
+                # Log detailed timing breakdown
+                if item_timings:
+                    total_mcp_time = sum(t.get("mcp_time", 0) for t in item_timings if "mcp_time" in t)
+                    total_parse_time = sum(t.get("parse_time", 0) for t in item_timings if "parse_time" in t)
+                    avg_item_time = sum(t["time"] for t in item_timings) / len(item_timings)
+                    max_item_time = max(t["time"] for t in item_timings)
+                    min_item_time = min(t["time"] for t in item_timings)
+                    
+                    self.log.info("⏱️  TIMING BREAKDOWN:")
+                    self.log.info("  • Total time: %.2fs", elapsed)
+                    self.log.info("  • Items processed: %d", len(item_timings))
+                    self.log.info("  • Avg per item: %.2fs | Min: %.2fs | Max: %.2fs", avg_item_time, min_item_time, max_item_time)
+                    if total_mcp_time > 0:
+                        self.log.info("  • Total MCP call time: %.2fs (%.1f%% of total)", total_mcp_time, (total_mcp_time / elapsed * 100) if elapsed > 0 else 0)
+                    if total_parse_time > 0:
+                        self.log.info("  • Total parse time: %.3fs (%.1f%% of total)", total_parse_time, (total_parse_time / elapsed * 100) if elapsed > 0 else 0)
+                    self.log.debug("  • Per-item timings: %s", item_timings)
+                
                 self.log.info("✅ TOOL SUCCESS: add_items_to_cart_by_ids - %d succeeded, %d failed (took %.2fs)",
                              len(successful), len(failed), elapsed)
+                
+                if successful:
+                    self.log.debug("Successfully added items: %s", 
+                                  [{"id": r.get("item", {}).get("id"), "name": r.get("item", {}).get("name"), "qty": r.get("quantity")} 
+                                   for r in successful])
+                if failed:
+                    self.log.warning("Failed items: %s", failed)
 
                 # Get cart summary
+                self.log.debug("Fetching cart summary...")
+                cart_start = time.time()
                 cart_res = await self.blinkit_client.call_tool("blinkit.cart", {})
+                cart_mcp_time = time.time() - cart_start
+                cart_parse_start = time.time()
                 cart = json.loads(cart_res["content"][0]["text"])
+                cart_parse_time = time.time() - cart_parse_start
+                cart_items_count = len(cart.get("items", []))
+                cart_total = cart.get("total", 0)
+                cart_total_time = time.time() - cart_start
+                self.log.info("📊 Cart summary fetched: %d items, Total: ₹%.2f (took %.2fs: MCP=%.2fs, Parse=%.3fs)", 
+                             cart_items_count, cart_total, cart_total_time, cart_mcp_time, cart_parse_time)
+                self.log.debug("Cart details: %s", cart)
 
                 return {
                     "successful": successful,
@@ -325,6 +455,8 @@ class UnifiedAgent:
             except Exception as e:
                 elapsed = time.time() - start_time
                 self.log.error("❌ TOOL ERROR: add_items_to_cart_by_ids failed after %.2fs - %s", elapsed, str(e))
+                import traceback
+                self.log.debug("Traceback: %s", traceback.format_exc())
                 raise
 
         async def search_and_add_items(ctx: RunContext, item_names: Annotated[list[str], "List of item names to search and add to cart"], quantities: Annotated[list[int] | None, "Optional list of quantities (defaults to 1 for each)"] = None):
@@ -490,13 +622,25 @@ class UnifiedAgent:
             Use this tool when user asks to buy items for a recipe/dish. This is step 1 - it only plans, doesn't add to cart.
             After showing the plan, ask user if they want to buy these items from Blinkit.
             """
+            import time
+            tool_start = time.time()
             self.log.info("📝 TOOL CALL: plan_recipe_ingredients_tool(recipe=%s)", recipe_text[:50])
+            self.log.debug("Full recipe text: %s", recipe_text)
+            
             try:
                 result = await self.plan_recipe_ingredients(recipe_text)
-                self.log.info("✅ TOOL SUCCESS: plan_recipe_ingredients_tool - Planned %d ingredients", len(result.get("ingredients", [])))
+                ingredients_count = len(result.get("ingredients", []))
+                tool_time = time.time() - tool_start
+                self.log.info("✅ TOOL SUCCESS: plan_recipe_ingredients_tool - Planned %d ingredients (took %.2fs)", 
+                             ingredients_count, tool_time)
+                self.log.debug("Result structure: message length=%d, ingredients count=%d, step=%s", 
+                              len(result.get("message", "")), ingredients_count, result.get("step"))
                 return result
             except Exception as e:
-                self.log.error("❌ TOOL ERROR: plan_recipe_ingredients_tool failed - %s", str(e))
+                tool_time = time.time() - tool_start
+                self.log.error("❌ TOOL ERROR: plan_recipe_ingredients_tool failed after %.2fs - %s", tool_time, str(e))
+                import traceback
+                self.log.debug("Traceback: %s", traceback.format_exc())
                 raise
 
         async def create_payment(ctx: RunContext, amount: Annotated[float, "Amount in INR"], order_id: Annotated[str | None, "Optional Order ID (auto-generated if not provided)"] = None):
@@ -709,38 +853,53 @@ class UnifiedAgent:
         import time
         plan_start_time = time.time()
         self.log.info("📝 Planning recipe ingredients from text...")
+        self.log.debug("Input text: %s", text[:200] + "..." if len(text) > 200 else text)
         
-        plan_result = await self.plan_agent.run(text)
-        ingredients: list = getattr(plan_result, "output", plan_result.output)
-        plan_time = time.time() - plan_start_time
-        self.log.info("📝 Got %d ingredients (took %.2fs)", len(ingredients), plan_time)
-        
-        # Log all ingredients for debugging
-        for idx, ing in enumerate(ingredients, 1):
-            self.log.debug("  %d. %s (qty: %s, optional: %s)", idx, ing.name, ing.quantity or "N/A", ing.optional)
-        
-        # Warn if we got very few ingredients (might indicate planning issue)
-        if len(ingredients) < 3:
-            self.log.warning("⚠️  Only got %d ingredients - this might be incomplete. Expected 6-7 for a typical recipe.", len(ingredients))
-        
-        # Format plan for user
-        response_parts = []
-        response_parts.append("📋 **Here are the ingredients needed:**\n\n")
-        for idx, ing in enumerate(ingredients, 1):
-            qty_str = f" ({ing.quantity})" if ing.quantity else ""
-            opt_str = " (optional)" if ing.optional else ""
-            response_parts.append(f"{idx}. **{ing.name}**{qty_str}{opt_str}\n")
-        
-        response_parts.append("\n🛒 **Would you like me to help you find and purchase these items from Blinkit?**\n")
-        response_parts.append("Just say 'yes' or 'proceed' and I'll search for them and add to your cart!\n")
-        
-        formatted_response = "".join(response_parts)
-        
-        return {
-            "message": formatted_response,
-            "ingredients": [ing.model_dump() for ing in ingredients],
-            "step": "plan_complete"  # Indicates we're waiting for user confirmation
-        }
+        try:
+            plan_result = await self.plan_agent.run(text)
+            ingredients: list = getattr(plan_result, "output", plan_result.output)
+            plan_time = time.time() - plan_start_time
+            self.log.info("📝 Got %d ingredients (took %.2fs)", len(ingredients), plan_time)
+            
+            # Log all ingredients for debugging
+            self.log.debug("Ingredient list:")
+            for idx, ing in enumerate(ingredients, 1):
+                self.log.debug("  %d. %s (qty: %s, optional: %s)", idx, ing.name, ing.quantity or "N/A", ing.optional)
+            
+            # Warn if we got very few ingredients (might indicate planning issue)
+            if len(ingredients) < 3:
+                self.log.warning("⚠️  Only got %d ingredients - this might be incomplete. Expected 6-7 for a typical recipe.", len(ingredients))
+            elif len(ingredients) > 10:
+                self.log.warning("⚠️  Got %d ingredients - this might be too many. Consider simplifying.", len(ingredients))
+            
+            # Format plan for user
+            response_parts = []
+            response_parts.append("📋 **Here are the ingredients needed:**\n\n")
+            for idx, ing in enumerate(ingredients, 1):
+                qty_str = f" ({ing.quantity})" if ing.quantity else ""
+                opt_str = " (optional)" if ing.optional else ""
+                response_parts.append(f"{idx}. **{ing.name}**{qty_str}{opt_str}\n")
+            
+            response_parts.append("\n🛒 **Would you like me to help you find and purchase these items from Blinkit?**\n")
+            response_parts.append("Just say 'yes' or 'proceed' and I'll search for them and add to your cart!\n")
+            
+            formatted_response = "".join(response_parts)
+            self.log.debug("Formatted response length: %d chars", len(formatted_response))
+            
+            ingredients_data = [ing.model_dump() for ing in ingredients]
+            self.log.debug("Ingredients data structure: %s", ingredients_data)
+            
+            return {
+                "message": formatted_response,
+                "ingredients": ingredients_data,
+                "step": "plan_complete"  # Indicates we're waiting for user confirmation
+            }
+        except Exception as e:
+            plan_time = time.time() - plan_start_time
+            self.log.error("❌ ERROR: plan_recipe_ingredients failed after %.2fs - %s", plan_time, str(e))
+            import traceback
+            self.log.debug("Traceback: %s", traceback.format_exc())
+            raise
 
     async def plan_and_shop(self, text: str):
         """Single-LLM plan, then batch search, then batch add, then cart summary."""
@@ -880,19 +1039,28 @@ class UnifiedAgent:
         try:
             # Run agent (without message_history to avoid format issues)
             self.log.debug("Sending request to agent model...")
+            agent_start = time.time()
             resp = await self.agent.run(full_message)
+            agent_run_time = time.time() - agent_start
             assistant_response = getattr(resp, "output", resp.output)
             
-            # Check if tools were used
+            # Check if tools were used and log timing breakdown
+            tool_call_times = []
             if hasattr(resp, 'all_messages'):
                 messages = resp.all_messages()
                 tool_calls = [msg for msg in messages if hasattr(msg, 'tool_calls') and msg.tool_calls]
                 if tool_calls:
                     self.log.info("🔧 Agent used %d tool call(s) in this run", len(tool_calls))
+                    # Try to extract tool call timing if available
+                    for msg in tool_calls:
+                        for tool_call in msg.tool_calls:
+                            tool_name = getattr(tool_call, 'name', 'unknown')
+                            self.log.debug("  Tool called: %s", tool_name)
             
             elapsed = time.time() - run_start_time
-            self.log.info("✅ AGENT SUCCESS: Response generated (length: %d chars, total time: %.2fs)", 
-                         len(str(assistant_response)), elapsed)
+            self.log.info("✅ AGENT SUCCESS: Response generated (length: %d chars)", len(str(assistant_response)))
+            self.log.info("⏱️  AGENT TIMING: Total=%.2fs | Agent.run()=%.2fs | Overhead=%.2fs", 
+                         elapsed, agent_run_time, elapsed - agent_run_time)
             self.log.debug("Agent response: %s", str(assistant_response)[:200] + "..." if len(str(assistant_response)) > 200 else str(assistant_response))
             
             # Store this exchange

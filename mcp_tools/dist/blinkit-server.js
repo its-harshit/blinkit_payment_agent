@@ -65,8 +65,8 @@ const catalog = [
   { id: "blk-060", name: "Condensed Milk 400g", category: "Dairy", price: 145, stock: 26, rating: 4.5 },
   { id: "blk-061", name: "Fresh Cream 200ml", category: "Dairy", price: 75, stock: 30, rating: 4.6 },
   { id: "blk-062", name: "Unsalted Butter 500g", category: "Dairy", price: 285, stock: 18, rating: 4.6 },
-  { id: "blk-063", name: "Mixed Dry Fruits 200g (Cashew, Almond, Raisin)", category: "Dry Fruits", price: 260, stock: 24, rating: 4.7 },
-  { id: "blk-064", name: "Carrot 1kg", category: "Vegetables", price: 28, stock: 70, rating: 4.3 },
+  { id: "blk-063", name: "Mixed Dry Fruits 200g (Cashew, Almond, Raisin)", category: "Dry Fruits", price: 260, stock: 24, rating: 4.7, keywords: ["almond", "almonds", "badam", "dry fruits", "nuts", "cashew", "raisin", "kishmish"] },
+  { id: "blk-064", name: "Carrot 1kg", category: "Vegetables", price: 28, stock: 70, rating: 4.3, keywords: ["carrot", "carrots", "gajar"] },
   { id: "blk-065", name: "Green Peas 500g", category: "Vegetables", price: 55, stock: 40, rating: 4.4 },
   { id: "blk-066", name: "Yogurt (Dahi) 500g", category: "Dairy", price: 45, stock: 34, rating: 4.5, keywords: ["curd"] },
   { id: "blk-067", name: "Tomato Puree 200g", category: "Packaged Food", price: 35, stock: 36, rating: 4.3 },
@@ -78,7 +78,7 @@ const catalog = [
   { id: "blk-073", name: "Too Yumm Multigrain Chips 90g", category: "Snacks", price: 35, stock: 40, rating: 4.1 },
   { id: "blk-074", name: "Haldiram Moong Dal 200g", category: "Snacks", price: 65, stock: 38, rating: 4.5 },
   { id: "blk-075", name: "Bikaneri Bhujia 200g", category: "Snacks", price: 70, stock: 36, rating: 4.4 },
-  { id: "blk-076", name: "Roasted Salted Almonds 200g", category: "Snacks", price: 320, stock: 24, rating: 4.7, keywords: ["almonds"] },
+  { id: "blk-076", name: "Roasted Salted Almonds 200g", category: "Snacks", price: 320, stock: 24, rating: 4.7, keywords: ["almond", "almonds", "badam", "roasted almond", "salted almond", "sliced almond"] },
   { id: "blk-077", name: "Trail Mix Seeds & Nuts 200g", category: "Snacks", price: 260, stock: 22, rating: 4.6 },
   { id: "blk-078", name: "Popcorn Ready-to-Eat 60g", category: "Snacks", price: 35, stock: 42, rating: 4.2 },
   { id: "blk-079", name: "Nacho Chips (Cheese) 150g", category: "Snacks", price: 90, stock: 28, rating: 4.3 },
@@ -141,7 +141,7 @@ const catalog = [
   { id: "blk-132", name: "Murmura (Puffed Rice) 500g", category: "Staples", price: 45, stock: 30, rating: 4.4, keywords: ["puffed rice"] },
   { id: "blk-133", name: "Tamarind Chutney 200g", category: "Condiments", price: 65, stock: 22, rating: 4.3 },
   { id: "blk-134", name: "Coconut Milk 400ml", category: "Dairy Alternatives", price: 110, stock: 18, rating: 4.4, keywords: ["coconut milk"] },
-  { id: "blk-135", name: "Almonds 500g", category: "Dry Fruits", price: 420, stock: 16, rating: 4.6 },
+  { id: "blk-135", name: "Almonds 500g", category: "Dry Fruits", price: 420, stock: 16, rating: 4.6, keywords: ["almond", "almonds", "badam", "sliced almond", "chopped almond", "whole almond"] },
   { id: "blk-136", name: "Cashews 500g", category: "Dry Fruits", price: 520, stock: 16, rating: 4.6 },
   { id: "blk-137", name: "Raisins 500g", category: "Dry Fruits", price: 220, stock: 18, rating: 4.5, keywords: ["kishmish"] },
   { id: "blk-138", name: "Semolina (Fine Rava) 500g", category: "Staples", price: 38, stock: 34, rating: 4.4 },
@@ -171,7 +171,27 @@ const catalog = [
   { id: "blk-159", name: "Fresh Coriander Leaves 100g", category: "Vegetables", price: 15, stock: 60, rating: 4.5, keywords: ["coriander", "coriander leaves", "dhania"] },
   { id: "blk-160", name: "Fresh Mint Leaves 100g", category: "Vegetables", price: 18, stock: 30, rating: 4.4, keywords: ["mint", "mint leaves", "pudina"] },
   { id: "blk-161", name: "Chicken Bone-in Curry Cut 1kg", category: "Meat", price: 325, stock: 20, rating: 4.6, keywords: ["chicken", "chicken curry cut", "chicken bone-in", "chicken pieces", "bone in pieces"] },
-  { id: "blk-162", name: "Whole Spices Mix 100g (Bay Leaf, Cloves, Cinnamon, Cardamom)", category: "Spices", price: 95, stock: 28, rating: 4.6, keywords: ["whole spices", "bay leaf", "cloves", "cinnamon", "cardamom", "whole spices mix"] }
+  { id: "blk-162", name: "Whole Spices Mix 100g (Bay Leaf, Cloves, Cinnamon, Cardamom)", category: "Spices", price: 95, stock: 28, rating: 4.6, keywords: ["whole spices", "bay leaf", "cloves", "cinnamon", "cardamom", "whole spices mix"] },
+  // Items for Gajar Ka Halwa (Carrot Halwa)
+  { id: "blk-163", name: "Carrot 500g", category: "Vegetables", price: 15, stock: 70, rating: 4.3, keywords: ["gajar", "carrots", "carrot"] },
+  { id: "blk-164", name: "Sugar 500g", category: "Staples", price: 25, stock: 50, rating: 4.4, keywords: ["sugar", "chini"] },
+  { id: "blk-165", name: "Desi Ghee 250ml", category: "Dairy", price: 220, stock: 20, rating: 4.8, keywords: ["ghee", "desi ghee", "clarified butter"] },
+  { id: "blk-166", name: "Full Cream Milk 1L", category: "Dairy", price: 68, stock: 40, rating: 4.6, keywords: ["milk", "full cream milk", "doodh"] },
+  { id: "blk-167", name: "Green Cardamom Pods 25g", category: "Spices", price: 95, stock: 20, rating: 4.7, keywords: ["cardamom", "elaichi", "green cardamom"] },
+  { id: "blk-168", name: "Khoya / Mawa 500g", category: "Dairy", price: 280, stock: 18, rating: 4.6, keywords: ["khoya", "mawa", "khoya mawa"] },
+  { id: "blk-169", name: "Mixed Dry Fruits 500g (Cashew, Almond, Raisin, Pistachio)", category: "Dry Fruits", price: 620, stock: 20, rating: 4.7, keywords: ["dry fruits", "nuts", "cashew", "almond", "raisin", "pistachio", "kaju", "badam", "kishmish"] },
+  { id: "blk-170", name: "Condensed Milk 200g", category: "Dairy", price: 75, stock: 28, rating: 4.5, keywords: ["condensed milk", "milkmaid"] },
+  // Items for Paneer Sabji (Paneer Curry)
+  { id: "blk-171", name: "Paneer 250g", category: "Dairy", price: 105, stock: 24, rating: 4.7, keywords: ["paneer", "cottage cheese"] },
+  { id: "blk-172", name: "Paneer Masala 100g", category: "Spices", price: 90, stock: 32, rating: 4.6, keywords: ["paneer masala", "paneer sabji masala", "paneer curry masala"] },
+  { id: "blk-173", name: "Kasuri Methi 50g", category: "Spices", price: 75, stock: 30, rating: 4.5, keywords: ["kasuri methi", "dried fenugreek leaves", "methi"] },
+  { id: "blk-174", name: "Fresh Cream 100ml", category: "Dairy", price: 40, stock: 32, rating: 4.6, keywords: ["cream", "fresh cream", "malai"] },
+  { id: "blk-175", name: "Tomato 500g", category: "Vegetables", price: 18, stock: 70, rating: 4.2, keywords: ["tomato", "tomatoes"] },
+  { id: "blk-176", name: "Onion 500g", category: "Vegetables", price: 22, stock: 80, rating: 4.1, keywords: ["onion", "onions", "pyaz"] },
+  { id: "blk-177", name: "Ginger 100g", category: "Vegetables", price: 15, stock: 40, rating: 4.3, keywords: ["ginger", "adrak"] },
+  { id: "blk-178", name: "Garlic 100g", category: "Vegetables", price: 12, stock: 50, rating: 4.4, keywords: ["garlic", "lehsun"] },
+  { id: "blk-179", name: "Paneer Tikka Masala Paste 100g", category: "Ready to Cook", price: 65, stock: 20, rating: 4.4, keywords: ["paneer tikka masala", "paneer curry paste"] },
+  { id: "blk-180", name: "Butter 200g", category: "Dairy", price: 115, stock: 22, rating: 4.6, keywords: ["butter", "makhan"] }
 ];
 
 const tools = [
@@ -240,14 +260,45 @@ function searchCatalog(query, limit = 5) {
   const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const fuzzy = new RegExp(escaped.replace(/\s+/g, ".*"), "i");
 
+  // Extract significant words (filter out common descriptive words like "sliced", "chopped", "diced", etc.)
+  const descriptiveWords = new Set(["sliced", "chopped", "diced", "whole", "raw", "fresh", "dried", "roasted", "salted", "unsalted", "organic", "pack", "packet", "box", "bottle", "jar", "can", "tin"]);
+  const queryWords = normalized.split(/\s+/).filter(word => word.length > 2 && !descriptiveWords.has(word));
+  // If all words were filtered out, use the original normalized query
+  const significantQuery = queryWords.length > 0 ? queryWords.join(" ") : normalized;
+
   return catalog
     .filter((item) => {
-      const nameMatch = item.name.toLowerCase().includes(normalized) || fuzzy.test(item.name);
-      const catMatch = item.category.toLowerCase().includes(normalized) || fuzzy.test(item.category);
+      const itemNameLower = item.name.toLowerCase();
+      const itemCategoryLower = item.category.toLowerCase();
+      
+      // Full query match (original behavior)
+      const nameMatch = itemNameLower.includes(normalized) || fuzzy.test(item.name);
+      const catMatch = itemCategoryLower.includes(normalized) || fuzzy.test(item.category);
+      
+      // Significant word match (handles "sliced almond" -> matches "almond")
+      const significantNameMatch = queryWords.length > 0 && 
+        queryWords.some(word => itemNameLower.includes(word) || new RegExp(word, "i").test(item.name));
+      const significantCatMatch = queryWords.length > 0 && 
+        queryWords.some(word => itemCategoryLower.includes(word));
+      
+      // Improved keyword matching: check both directions (keyword contains query OR query contains keyword)
+      // This handles singular/plural variations (e.g., "carrot" matches "carrots" and vice versa)
       const keywordMatch = Array.isArray(item.keywords)
-        ? item.keywords.some((k) => fuzzy.test(k) || k.toLowerCase().includes(normalized))
+        ? item.keywords.some((k) => {
+            const kLower = k.toLowerCase();
+            // Check full query match
+            if (fuzzy.test(k) || kLower.includes(normalized) || normalized.includes(kLower)) {
+              return true;
+            }
+            // Check significant word match (handles "sliced almond" matching "almond" keyword)
+            if (queryWords.length > 0) {
+              return queryWords.some(word => kLower.includes(word) || word.includes(kLower));
+            }
+            return false;
+          })
         : false;
-      return nameMatch || catMatch || keywordMatch;
+      
+      return nameMatch || catMatch || keywordMatch || significantNameMatch || significantCatMatch;
     })
     .slice(0, limit);
 }
