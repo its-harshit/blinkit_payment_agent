@@ -77,6 +77,7 @@ class UnifiedAgent:
             "- When adding a single item to cart (if you already have the item ID), use add_to_cart tool.\n"
             "- When planning ingredients, prefer only 6-7 most basic common ingredients available in raw form at Blinkit(Indian supermarkets/grocery stores). Avoid exotic or hard-to-find items or ultra processed things which might be hard to exactly find; suggest nearest simple substitutes.\n"
             "- For single item searches (without adding to cart), use search_products tool.\n"
+            
         )
 
         self.blinkit_client: McpClient | None = None
