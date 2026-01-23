@@ -10,7 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from .unified_agent import UnifiedAgent
+# from .unified_agent import UnifiedAgent
+from .unified_agent_langchain import UnifiedAgent
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
