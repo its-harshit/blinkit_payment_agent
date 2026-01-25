@@ -10,8 +10,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-# from .unified_agent import UnifiedAgent
-from .unified_agent_langchain import UnifiedAgent
+from .unified_agent import UnifiedAgent
+# from .unified_agent_langchain import UnifiedAgent
+# NOTE: If your OSS model doesn't support function calling, uncomment the LangChain version above
+# and comment out the pydantic-ai version. LangChain uses ReAct (text-based) tool calling which
+# works better with models that don't support OpenAI-style function calling.
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -59,14 +62,30 @@ class ChatResponse(BaseModel):
     reply: str
 
 
-def _get_or_create_agent(chat_id: Optional[str] = None) -> tuple[UnifiedAgent, str]:
-    """Get or create an agent for a chat session."""
+async def _get_or_create_agent(chat_id: Optional[str] = None) -> tuple[UnifiedAgent, str]:
+    """Get or create an agent for a chat session.
+    
+    Eagerly initializes MCP clients (Blinkit and Payment) when creating a new agent
+    to avoid initialization delay on first request.
+    """
     if chat_id and chat_id in _chat_agents:
         return _chat_agents[chat_id], chat_id
     
     # Create new chat session
     new_chat_id = chat_id or str(uuid.uuid4())
     agent = UnifiedAgent(log_level=logging.INFO)
+    
+    # Eagerly initialize MCP clients to avoid delay on first request
+    try:
+        logger.info(f"Initializing MCP clients for chat_id: {new_chat_id}")
+        await agent._ensure_blinkit()
+        await agent._ensure_payment()
+        logger.info(f"✅ MCP clients initialized successfully for chat_id: {new_chat_id}")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize MCP clients for chat_id {new_chat_id}: {e}")
+        # Still store the agent, but it will fail on first tool call
+        # This allows the server to start even if MCP servers are temporarily unavailable
+    
     _chat_agents[new_chat_id] = agent
     logger.info(f"Created new agent for chat_id: {new_chat_id}")
     return agent, new_chat_id
@@ -102,7 +121,7 @@ async def verify_otp(request: VerifyOTPRequest):
 @app.post("/api/chat/create", response_model=ChatCreateResponse)
 async def create_chat() -> ChatCreateResponse:
     """Create a new chat session."""
-    agent, chat_id = _get_or_create_agent()
+    agent, chat_id = await _get_or_create_agent()
     return ChatCreateResponse(chat_id=chat_id)
 
 
@@ -131,7 +150,7 @@ async def chat_stream(body: ChatRequest) -> StreamingResponse:
     
     async def sse_generator() -> AsyncGenerator[bytes, None]:
         try:
-            agent, chat_id = _get_or_create_agent(body.chat_id)
+            agent, chat_id = await _get_or_create_agent(body.chat_id)
             
             # Send chat_id back to frontend
             yield f"data: {json.dumps({'type': 'chat_id', 'chat_id': chat_id})}\n\n".encode("utf-8")
@@ -175,7 +194,7 @@ async def chat_stream(body: ChatRequest) -> StreamingResponse:
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(body: ChatRequest) -> ChatResponse:
     """Chat with the agent (non-streaming)."""
-    agent, _ = _get_or_create_agent(body.chat_id)
+    agent, _ = await _get_or_create_agent(body.chat_id)
     reply = await agent.run(body.message)
     
     # Format response
@@ -185,6 +204,22 @@ async def chat(body: ChatRequest) -> ChatResponse:
         reply_text = str(reply)
     
     return ChatResponse(reply=reply_text)
+
+
+@app.on_event("startup")
+async def startup_event() -> None:
+    """Initialize MCP clients at server startup to verify they're available."""
+    logger.info("🚀 Server starting up - verifying MCP servers...")
+    try:
+        # Create a test agent to verify MCP servers are available
+        test_agent = UnifiedAgent(log_level=logging.INFO)
+        await test_agent._ensure_blinkit()
+        await test_agent._ensure_payment()
+        await test_agent.close()
+        logger.info("✅ MCP servers verified and ready")
+    except Exception as e:
+        logger.warning(f"⚠️  MCP servers not available at startup: {e}")
+        logger.warning("   Server will continue, but MCP operations may fail until servers are available")
 
 
 @app.on_event("shutdown")

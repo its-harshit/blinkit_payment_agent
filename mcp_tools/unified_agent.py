@@ -22,8 +22,8 @@ BLINKIT_CMD = ["node", "dist/blinkit-server.js"]
 PAYMENT_CMD = ["node", "dist/payment-server.js"]
 
 DEFAULT_MODEL = OpenAIChatModel(
-    model_name="NPCI_Greviance",
-    provider=OpenAIProvider(base_url="http://183.82.7.228:9519/v1", api_key="dummy"),
+    model_name="/model",
+    provider=OpenAIProvider(base_url="http://183.82.7.228:9532/v1", api_key="dummy"),
 )
 
 
@@ -49,21 +49,49 @@ class UnifiedAgent:
             "or pay. Otherwise, just reply normally.\n"
             "- IMPORTANT: Never mention that you work for Blinkit or any specific shopping company. You are an NPCI support agent with shopping capabilities.\n"
             "\n"
+            "**HOW TO USE TOOLS:**\n"
+            "You have access to several tools that you MUST use when the user requests shopping or payment operations.\n"
+            "When you need to use a tool, the system will automatically call it for you. You just need to:\n"
+            "1. Identify when a tool is needed (e.g., user asks to search, add to cart, or pay)\n"
+            "2. The tool will be called automatically with the appropriate parameters\n"
+            "3. Use the tool results to respond to the user\n"
+            "\n"
+            "**AVAILABLE TOOLS:**\n"
+            "- get_product(item_id): Get details of a specific product by ID (e.g., 'blk-001')\n"
+            "- search_items_for_cart(item_names, quantities): Search items (single or multiple) and return results without adding to cart. Pass a list of item names, e.g., ['milk'] or ['milk', 'bread']. Returns found_items array with IDs, names, prices.\n"
+            "- add_items_to_cart_by_ids(items): Add items (single or multiple) to cart using their IDs. Pass a list of items with 'id' and 'quantity' fields, e.g., [{'id': 'blk-001', 'quantity': 2}] or [{'id': 'blk-001', 'quantity': 1}, {'id': 'blk-002', 'quantity': 2}]\n"
+            "- view_cart(): View current cart contents and total\n"
+            "- clear_cart(): Clear all items from cart\n"
+            "- plan_recipe_ingredients_tool(recipe_text): Plan ingredients needed for a recipe (e.g., 'biryani', 'dosa')\n"
+            "- create_payment(amount, order_id): Create payment intent (amount in INR, order_id optional)\n"
+            "- check_payment_status(payment_id): Check payment status by payment ID. IMPORTANT: This MUST be called after create_payment to complete the transaction and automatically clear the cart.\n"
+            "\n"
+            "**TOOL CALLING EXAMPLES:**\n"
+            "- User: 'Search for milk' → Use search_items_for_cart(item_names=['milk'])\n"
+            "- User: 'Add blk-001 to cart' → Use add_items_to_cart_by_ids(items=[{'id': 'blk-001', 'quantity': 1}])\n"
+            "- User: 'Search for milk and bread' → Use search_items_for_cart(item_names=['milk', 'bread'])\n"
+            "- User: 'What's in my cart?' → Use view_cart()\n"
+            "- User: 'Buy ingredients for biryani' → Use plan_recipe_ingredients_tool(recipe_text='biryani'), then search_items_for_cart, then add_items_to_cart_by_ids\n"
+            "- User: 'Checkout and pay' → Use view_cart() to get total, then create_payment(amount=total), then IMMEDIATELY check_payment_status(payment_id=...) to complete payment and clear cart\n"
+            "\n"
+            "**CRITICAL: When you need to use a tool, you MUST call it. Do not just describe what you would do - actually invoke the tool.**\n"
+            "The system will automatically handle the tool execution. You just need to indicate when a tool should be used.\n"
+            "\n"
             "**RECIPE SHOPPING FLOW (when user asks to buy items for a dish/recipe):**\n"
             "1. When user asks to buy items for a recipe (e.g., 'buy items for biryani', 'get ingredients for dosa'), "
             "FIRST plan the ingredients using the plan_recipe_ingredients_tool with the recipe/dish name. This will return a plan with ingredient names.\n"
             "2. Display the ingredient list from the plan result to the user, then STOP and ask: 'Would you like me to help you find and purchase these items?' Wait for user confirmation.\n"
-            "3. If user confirms (says 'yes', 'proceed', 'go ahead', 'buy them'), extract the ingredient NAMES from the plan result (the 'ingredients' array, use the 'name' field of each ingredient). "
+            "3. If user confirms, extract the ingredient NAMES from the plan result (the 'ingredients' array, use the 'name' field of each ingredient). "
             "Then use search_items_for_cart tool with a list of those ingredient names (as strings) to search for them.\n"
             "4. After search_items_for_cart completes, the tool returns a dict with 'found_items' array and 'skipped' list. "
             "The search_items_for_cart result is a dict like: {'found_items': [{'id': 'blk-101', 'name': 'Chicken', 'price': 320, 'quantity': 1}, ...], 'skipped': [...]}. "
             "Display the found items in a formatted table showing: item name, price, quantity, and total from the 'found_items' array. "
             "Also mention any items that were not found (from the 'skipped' list). Then STOP and ask: 'Would you like me to add these items to your cart?' Wait for user confirmation.\n"
-            "5. If user confirms adding to cart (says 'yes', 'add them', 'proceed'), use add_items_to_cart_by_ids with the items from the search results. "
-            "You can use the 'found_items' array from the search_items_for_cart result, or construct items with the IDs and quantities from the search results. "
+            "5. If user confirms adding to cart, use add_items_to_cart_by_ids with the items from the search results. "
+             "To be sure of the ids, you can once again call the search_items_for_cart tool with the item names to get the actual ids and use them to add to cart"
             "Each item should have at least 'id' (like 'blk-101') and 'quantity' fields. Use the actual item IDs from the search results, not placeholder IDs.\n"
             "6. After add_items_to_cart_by_ids completes, show the cart summary from the result and STOP. Ask: 'Would you like to add more items or proceed to checkout?'\n"
-            "7. If user says 'proceed to checkout', 'checkout', 'pay', 'proceed to payment', or similar, first call view_cart to get the cart total, then use create_payment with the amount (order_id is optional, will be auto-generated), then immediately call check_payment_status with the payment_id from create_payment result to complete the transaction.\n"
+            "7. If user says 'proceed to checkout', 'checkout', 'pay', 'proceed to payment', or similar, first call view_cart to get the cart total, then use create_payment with the amount (order_id is optional, will be auto-generated), then IMMEDIATELY call check_payment_status with the payment_id from create_payment result to complete the transaction and clear the cart.\n"
             "8. If user wants to add more items, let them specify the item names and use search_items_for_cart again, then add_items_to_cart_by_ids after confirmation.\n"
             "\n"
             "- IMPORTANT: Always wait for user confirmation before proceeding to the next step in recipe shopping flow.\n"
@@ -72,11 +100,9 @@ class UnifiedAgent:
             "- IMPORTANT: When user confirms checkout/payment, process payment directly without asking again.\n"
             "- After successful payment (when check_payment_status returns success/completed), the cart is automatically cleared. "
             "You don't need to manually clear it.\n"
-            "- PREFERRED FLOW: For multiple items, use search_items_for_cart first (to show results), then add_items_to_cart_by_ids after user confirms. "
-            "This gives better UX as user can review items before adding to cart.\n"
-            "- When adding a single item to cart (if you already have the item ID), use add_to_cart tool.\n"
+            "- PREFERRED FLOW: Always use search_items_for_cart first (to show results), then add_items_to_cart_by_ids after user confirms. " 
+            "This gives better UX as user can review items before adding to cart. Works for both single and multiple items.\n"
             "- When planning ingredients, prefer only 6-7 most basic common ingredients available in raw form at Blinkit(Indian supermarkets/grocery stores). Avoid exotic or hard-to-find items or ultra processed things which might be hard to exactly find; suggest nearest simple substitutes.\n"
-            "- For single item searches (without adding to cart), use search_products tool.\n"
             
         )
 
@@ -188,7 +214,7 @@ class UnifiedAgent:
                 self.log.error("❌ TOOL ERROR: add_to_cart failed after %.2fs - %s", elapsed, str(e))
                 raise
 
-        async def search_items_for_cart(ctx: RunContext, item_names: Annotated[list[str], "List of item names to search"], quantities: Annotated[list[int] | None, "Optional list of quantities (defaults to 1 for each)"] = None):
+        async def search_items_for_cart(ctx: RunContext, item_names: Annotated[list[str], "List of item names to search (can be single item as list)"], quantities: Annotated[list[int] | None, "Optional list of quantities (defaults to 1 for each)"] = None):
             """Search for multiple items and return results (without adding to cart). 
             
             Use this to search items first, show results to user, then ask for confirmation before adding.
@@ -678,9 +704,17 @@ class UnifiedAgent:
                 self.log.debug("Payment status: %s", status)
                 
                 # Auto-clear cart if payment is successful
+                # Check for various success status indicators
                 payment_status_lower = payment_status.lower()
-                if payment_status_lower in ["success", "successful", "completed", "paid", "settled"]:
-                    self.log.info("💳 Payment successful! Clearing cart...")
+                has_txn_id = bool(status.get("txnId") or status.get("txn_id"))
+                is_successful = (
+                    payment_status_lower in ["success", "successful", "succeeded", "completed", "paid", "settled", "done", "processed"] or
+                    has_txn_id  # If there's a transaction ID, payment likely succeeded
+                )
+                
+                if is_successful:
+                    self.log.info("💳 Payment successful! (status: %s, txnId: %s) Clearing cart...", 
+                                 payment_status, status.get("txnId") or status.get("txn_id") or "none")
                     try:
                         await self._ensure_blinkit()
                         clear_result = await self.blinkit_client.call_tool("blinkit.clear_cart", {})
@@ -690,9 +724,13 @@ class UnifiedAgent:
                         status["cart_cleared"] = True
                         status["items_removed"] = items_removed
                     except Exception as clear_err:
-                        self.log.warning("⚠️  Failed to clear cart after payment: %s", str(clear_err))
+                        self.log.error("❌ Failed to clear cart after payment: %s", str(clear_err))
+                        import traceback
+                        self.log.debug("Cart clear error traceback: %s", traceback.format_exc())
                         status["cart_cleared"] = False
                         status["clear_error"] = str(clear_err)
+                else:
+                    self.log.debug("Payment status '%s' not recognized as success - cart not cleared", payment_status)
                 
                 return status
             except Exception as e:
@@ -702,11 +740,10 @@ class UnifiedAgent:
         self.agent = Agent(model=model, instructions=instructions)
         
         # Register tools
-        self.agent.tool(search_products)  # Single item search
         self.agent.tool(get_product)  # Get product details by ID
-        self.agent.tool(add_to_cart)  # Add single item to cart by ID
-        self.agent.tool(search_items_for_cart)  # Search multiple items (returns results, doesn't add)
-        self.agent.tool(add_items_to_cart_by_ids)  # Add items to cart by IDs (after user confirms)
+        self.agent.tool(search_items_for_cart)  # Search items (single or multiple) - returns results without adding
+        self.agent.tool(add_items_to_cart_by_ids)  # Add items (single or multiple) to cart by IDs
+        # Removed redundant tools: search_products and add_to_cart (use search_items_for_cart and add_items_to_cart_by_ids instead)
         # self.agent.tool(search_and_add_items)  # Efficient combined search+add (legacy, prefer two-step flow)
         self.agent.tool(plan_recipe_ingredients_tool)  # Plan ingredients for recipe shopping flow
         self.agent.tool(view_cart)  # View cart summary
@@ -718,7 +755,7 @@ class UnifiedAgent:
         if self.blinkit_client is None:
             self.log.info("🔌 Initializing Blinkit MCP client...")
             try:
-                self.blinkit_client = McpClient("blinkit-unified", BLINKIT_CMD, cwd=str(MCP_TOOLS_DIR), timeout=30.0)
+                self.blinkit_client = McpClient("blinkit-unified", BLINKIT_CMD, cwd=str(MCP_TOOLS_DIR), timeout=5.0)
                 await self.blinkit_client.initialize()
                 self.log.info("✅ Blinkit MCP client initialized successfully")
             except Exception as e:

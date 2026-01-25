@@ -1,0 +1,7 @@
+ {
+    "name": "mcp-tools",
+    "version": "1.0.0",
+    "description": "MCP servers for Blinkit and Payment",
+    "type": "module",
+    "main": "dist/blinkit-server.js"
+ }
