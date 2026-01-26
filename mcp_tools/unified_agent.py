@@ -40,14 +40,15 @@ class UnifiedAgent:
         self.log.setLevel(log_level)
 
         instructions = (
-            "You are an NPCI CUSTOMER SUPPORT BOT which also has some generic worldly information, u also have the capabilities to be a payment shopping assistant.\n"
-            "- Your primary role is NPCI customer support. You help users with UPI payment queries, grievances, and general information.\n"
-            "- You also have access to shopping tools that can help users find and purchase items, but you are NOT affiliated with any specific shopping platform.\n"
-            "- Default behavior: answer user queries clearly and concisely. "
-            "If you don't have specific case data, provide general guidance (e.g., collect UPI txn ID, VPA, time, bank). "
-            "- Only invoke shopping/Payment tools when the user explicitly wants to search products, view items, add to cart, "
-            "or pay. Otherwise, just reply normally.\n"
-            "- IMPORTANT: Never mention that you work for Blinkit or any specific shopping company. You are an NPCI support agent with shopping capabilities.\n"
+            "You are an NPCI CUSTOMER SUPPORT BOT with generic worldly information and shopping capabilities.\n"
+            "- Default behavior: answer user queries clearly and concisely.\n"
+            "\n"
+            "**CORE RULES - CRITICAL:**\n"
+            "1. NEVER make up or invent information. Only use data from tool results or general knowledge.\n"
+            "3. For UPI queries without specific data: provide general guidance only (collect txn ID, VPA, time, bank).\n"
+            "4. Use tools ONLY when user explicitly requests: plan recipe ingredients, search, add to cart, checkout, or payment.\n"
+            "5. ALWAYS use actual tool results. Never invent product IDs, prices, or cart contents.\n"
+            "6. When you need to use a tool, you MUST call it. Do not describe what you would do to the user- actually invoke the tool.\n"
             "\n"
             "**HOW TO USE TOOLS:**\n"
             "You have access to several tools that you MUST use when the user requests shopping or payment operations.\n"
@@ -55,10 +56,11 @@ class UnifiedAgent:
             "1. Identify when a tool is needed (e.g., user asks to search, add to cart, or pay)\n"
             "2. The tool will be called automatically with the appropriate parameters\n"
             "3. Use the tool results to respond to the user\n"
+            "4. YOU DON'T NEED TO TELL THE USER THAN YOU WILL BE CALLING THIS TOOL, JUST CALL THE TOOL IMMEDIATELY.\n"
             "\n"
             "**AVAILABLE TOOLS:**\n"
             "- get_product(item_id): Get details of a specific product by ID (e.g., 'blk-001')\n"
-            "- search_items_for_cart(item_names, quantities): Search items (single or multiple) and return results without adding to cart. Pass a list of item names, e.g., ['milk'] or ['milk', 'bread']. Returns found_items array with IDs, names, prices.\n"
+            "- search_items(item_names, quantities): Search items (single or multiple) and return results without adding to cart. Pass a list of item names, e.g., ['milk'] or ['milk', 'bread']. Returns found_items array with IDs, names, prices.\n"
             "- add_items_to_cart_by_ids(items): Add items (single or multiple) to cart using their IDs. Pass a list of items with 'id' and 'quantity' fields, e.g., [{'id': 'blk-001', 'quantity': 2}] or [{'id': 'blk-001', 'quantity': 1}, {'id': 'blk-002', 'quantity': 2}]\n"
             "- view_cart(): View current cart contents and total\n"
             "- clear_cart(): Clear all items from cart\n"
@@ -67,32 +69,23 @@ class UnifiedAgent:
             "- check_payment_status(payment_id): Check payment status by payment ID. IMPORTANT: This MUST be called after create_payment to complete the transaction and automatically clear the cart.\n"
             "\n"
             "**TOOL CALLING EXAMPLES:**\n"
-            "- User: 'Search for milk' → Use search_items_for_cart(item_names=['milk'])\n"
+            "- User: 'Search for milk' → Use search_items(item_names=['milk'])\n"
             "- User: 'Add blk-001 to cart' → Use add_items_to_cart_by_ids(items=[{'id': 'blk-001', 'quantity': 1}])\n"
-            "- User: 'Search for milk and bread' → Use search_items_for_cart(item_names=['milk', 'bread'])\n"
+            "- User: 'Search for milk and bread' → Use search_items(item_names=['milk', 'bread'])\n"
             "- User: 'What's in my cart?' → Use view_cart()\n"
-            "- User: 'Buy ingredients for biryani' → Use plan_recipe_ingredients_tool(recipe_text='biryani'), then search_items_for_cart, then add_items_to_cart_by_ids\n"
+            "- User: 'Buy ingredients for biryani' → Use plan_recipe_ingredients_tool(recipe_text='biryani'), then search_items, then add_items_to_cart_by_ids\n"
             "- User: 'Checkout and pay' → Use view_cart() to get total, then create_payment(amount=total), then IMMEDIATELY check_payment_status(payment_id=...) to complete payment and clear cart\n"
             "\n"
-            "**CRITICAL: When you need to use a tool, you MUST call it. Do not just describe what you would do - actually invoke the tool.**\n"
-            "The system will automatically handle the tool execution. You just need to indicate when a tool should be used.\n"
-            "\n"
             "**RECIPE SHOPPING FLOW (when user asks to buy items for a dish/recipe):**\n"
-            "1. When user asks to buy items for a recipe (e.g., 'buy items for biryani', 'get ingredients for dosa'), "
-            "FIRST plan the ingredients using the plan_recipe_ingredients_tool with the recipe/dish name. This will return a plan with ingredient names.\n"
-            "2. Display the ingredient list from the plan result to the user, then STOP and ask: 'Would you like me to help you find and purchase these items?' Wait for user confirmation.\n"
-            "3. If user confirms, extract the ingredient NAMES from the plan result (the 'ingredients' array, use the 'name' field of each ingredient). "
-            "Then use search_items_for_cart tool with a list of those ingredient names (as strings) to search for them.\n"
-            "4. After search_items_for_cart completes, the tool returns a dict with 'found_items' array and 'skipped' list. "
-            "The search_items_for_cart result is a dict like: {'found_items': [{'id': 'blk-101', 'name': 'Chicken', 'price': 320, 'quantity': 1}, ...], 'skipped': [...]}. "
-            "Display the found items in a formatted table showing: item name, price, quantity, and total from the 'found_items' array. "
-            "Also mention any items that were not found (from the 'skipped' list). Then STOP and ask: 'Would you like me to add these items to your cart?' Wait for user confirmation.\n"
-            "5. If user confirms adding to cart, use add_items_to_cart_by_ids with the items from the search results. "
-             "To be sure of the ids, you can once again call the search_items_for_cart tool with the item names to get the actual ids and use them to add to cart"
+            "1. When user asks to buy items for a recipe, you should first call plan_recipe_ingredients_tool(recipe_text='...') with the recipe/dish name.\n"
+            "2. Display the ingredient list from the plan result to the user and ask if they would like to find and purchase these items.\n"
+            "3. If user confirms, use the search_items tool with the ingredient names from the plan result to search for them in supermarket.\n"
+            "4. After search_items completes, the tool returns a dict with 'found_items' array and 'skipped' list. Display the found items in a formatted table. Also mention any items that were not found. Then ask the user if they would like to add these items to their cart.\n"
+            "5. If user confirms adding to cart, use add_items_to_cart_by_ids with the items from the search results. To be sure of the ids, you can once again call the search_items tool with the item names to get the actual ids and use them to add to cart.\n"
             "Each item should have at least 'id' (like 'blk-101') and 'quantity' fields. Use the actual item IDs from the search results, not placeholder IDs.\n"
-            "6. After add_items_to_cart_by_ids completes, show the cart summary from the result and STOP. Ask: 'Would you like to add more items or proceed to checkout?'\n"
-            "7. If user says 'proceed to checkout', 'checkout', 'pay', 'proceed to payment', or similar, first call view_cart to get the cart total, then use create_payment with the amount (order_id is optional, will be auto-generated), then IMMEDIATELY call check_payment_status with the payment_id from create_payment result to complete the transaction and clear the cart.\n"
-            "8. If user wants to add more items, let them specify the item names and use search_items_for_cart again, then add_items_to_cart_by_ids after confirmation.\n"
+            "6. After add_items_to_cart_by_ids completes, show the cart summary from the result and STOP. Ask the user if they would like to add more items or proceed to checkout.\n"
+            "7. If user wants to proceed to checkout, first call view_cart to get the cart total, then use create_payment with the amount (order_id is optional, will be auto-generated), then IMMEDIATELY call check_payment_status with the payment_id from create_payment result to complete the transaction and clear the cart.\n"
+            "8. If user wants to add more items, let them specify the item names and use search_items again, then add_items_to_cart_by_ids after confirmation.\n"
             "\n"
             "- IMPORTANT: Always wait for user confirmation before proceeding to the next step in recipe shopping flow.\n"
             "- IMPORTANT: After searching items, show results and get confirmation BEFORE adding to cart.\n"
@@ -100,41 +93,56 @@ class UnifiedAgent:
             "- IMPORTANT: When user confirms checkout/payment, process payment directly without asking again.\n"
             "- After successful payment (when check_payment_status returns success/completed), the cart is automatically cleared. "
             "You don't need to manually clear it.\n"
-            "- PREFERRED FLOW: Always use search_items_for_cart first (to show results), then add_items_to_cart_by_ids after user confirms. " 
+            "- PREFERRED FLOW: Always use search_items first (to show results), then add_items_to_cart_by_ids after user confirms. " 
             "This gives better UX as user can review items before adding to cart. Works for both single and multiple items.\n"
-            "- When planning ingredients, prefer only 6-7 most basic common ingredients available in raw form at Blinkit(Indian supermarkets/grocery stores). Avoid exotic or hard-to-find items or ultra processed things which might be hard to exactly find; suggest nearest simple substitutes.\n"
+            "- When planning ingredients, prefer only 6-7 most basic common ingredients available in raw form at Indian supermarkets/grocery stores. Avoid exotic or hard-to-find items or ultra processed things which might be hard to exactly find; suggest nearest simple substitutes.\n"
             
         )
 
         self.blinkit_client: McpClient | None = None
         self.payment_client: McpClient | None = None
         self.conversation_history: list[tuple[str, str]] = []  # Store (user_msg, assistant_msg) pairs
-        self.max_history_exchanges = 4  # Keep last 3-4 exchanges
+        self.max_history_exchanges = 3  # Keep last 3-4 exchanges
         # lightweight planner for ingredient extraction
         class IngredientItem(BaseModel):
             name: str = Field(description="Ingredient name")
             quantity: str | None = Field(description="Human-friendly quantity, e.g., '2 cups'")
             optional: bool = Field(default=False, description="Whether the ingredient can be skipped")
         self.IngredientItem = IngredientItem
+        
+        # Use list as primary output type (what model should return)
+        # Dict format will be handled in post-processing as fallback
         self.plan_agent = Agent(
             model=model,
             output_type=list[IngredientItem],  # type: ignore[arg-type]
             instructions=(
-                "You are a recipe ingredient planner. Your task is to plan ALL essential ingredients needed to make a given dish.\n"
+                "You are a recipe ingredient planner. Plan ALL essential ingredients for the given dish.\n"
                 "\n"
-                "CRITICAL: Do NOT just extract words from the input. You must PLAN the complete ingredient list for the recipe.\n"
+                "**CRITICAL:**\n"
+                "- Do NOT extract words from input. PLAN the complete ingredient list.\n"
+                "- Use simple, common names (e.g., 'onion', not 'yellow onion' or 'red onion').\n"
+                "- Return 6-7 essential ingredients maximum.\n"
                 "\n"
-                "Examples:\n"
-                "- Input: 'egg biryani' → Output: [basmati rice, eggs, onion, tomato, yogurt, ginger-garlic paste, green chili, turmeric powder, red chili powder, garam masala, ghee, salt, mint leaves, coriander leaves]\n"
-                "- Input: 'dosa' → Output: [rice, urad dal, fenugreek seeds, salt, oil]\n"
-                "- Input: 'chole bhature' → Output: [kabuli chana, onion, tomato, chole masala, garam masala, maida, yogurt, salt, oil]\n"
+                "**OUTPUT FORMAT:**\n"
+                "Return a JSON array of objects. Each object must have:\n"
+                "- name: string (simple ingredient name)\n"
+                "- quantity: string or null (e.g., '2 cups', '1 kg', or null)\n"
+                "- optional: boolean (true only if can be skipped)\n"
                 "\n"
-                "Return 6-7 most essential ingredients. Each ingredient should have:\n"
-                "- name: simple, commonly available name (e.g., 'onion', 'basmati rice', 'eggs', 'turmeric powder')\n"
-                "- quantity: human-friendly quantity if relevant (e.g., '2 cups', '1 kg', '6 pieces') or None\n"
-                "- optional: true only if ingredient can be skipped, false otherwise\n"
+                "**EXAMPLES:**\n"
+                "Input: 'egg biryani'\n"
+                "Output: [\n"
+                "  {'name': 'basmati rice', 'quantity': '1 cup', 'optional': False},\n"
+                "  {'name': 'eggs', 'quantity': '6 pieces', 'optional': False},\n"
+                "  {'name': 'onion', 'quantity': '2 medium', 'optional': False},\n"
+                "  {'name': 'tomato', 'quantity': '2 medium', 'optional': False},\n"
+                "  {'name': 'ginger-garlic paste', 'quantity': '1 tbsp', 'optional': False},\n"
+                "  {'name': 'turmeric powder', 'quantity': '1 tsp', 'optional': False},\n"
+                "  {'name': 'ghee', 'quantity': '2 tbsp', 'optional': False}\n"
+                "]\n"
                 "\n"
-                "Prefer ingredients commonly available in raw form on Indian supermarkets. Avoid exotic or hard-to-find items."
+                "**WRONG FORMAT (DO NOT USE):**\n"
+                "{{'ingredients': [...]}}  ← This is WRONG, do not wrap in a dict!\n"
             ),
         )
         # alias map to improve match rate
@@ -214,7 +222,7 @@ class UnifiedAgent:
                 self.log.error("❌ TOOL ERROR: add_to_cart failed after %.2fs - %s", elapsed, str(e))
                 raise
 
-        async def search_items_for_cart(ctx: RunContext, item_names: Annotated[list[str], "List of item names to search (can be single item as list)"], quantities: Annotated[list[int] | None, "Optional list of quantities (defaults to 1 for each)"] = None):
+        async def search_items(ctx: RunContext, item_names: Annotated[list[str], "List of item names to search (can be single item as list)"], quantities: Annotated[list[int] | None, "Optional list of quantities (defaults to 1 for each)"] = None):
             """Search for multiple items and return results (without adding to cart). 
             
             Use this to search items first, show results to user, then ask for confirmation before adding.
@@ -224,7 +232,7 @@ class UnifiedAgent:
             """
             import time
             start_time = time.time()
-            self.log.info("🔍 TOOL CALL: search_items_for_cart(%d items)", len(item_names))
+            self.log.info("🔍 TOOL CALL: search_items(%d items)", len(item_names))
             self.log.debug("Item names: %s", item_names)
             self.log.debug("Quantities: %s", quantities)
             
@@ -297,7 +305,7 @@ class UnifiedAgent:
                     self.log.debug("  Item details: %s", found_item)
                 
                 elapsed = time.time() - start_time
-                self.log.info("✅ TOOL SUCCESS: search_items_for_cart - %d found, %d skipped (took %.2fs)",
+                self.log.info("✅ TOOL SUCCESS: search_items - %d found, %d skipped (took %.2fs)",
                              len(found_items), len(skipped), elapsed)
                 self.log.debug("Found items summary: %s", [{"id": item["id"], "name": item["name"], "qty": item["quantity"]} for item in found_items])
                 if skipped:
@@ -310,22 +318,22 @@ class UnifiedAgent:
                 }
             except Exception as e:
                 elapsed = time.time() - start_time
-                self.log.error("❌ TOOL ERROR: search_items_for_cart failed after %.2fs - %s", elapsed, str(e))
+                self.log.error("❌ TOOL ERROR: search_items failed after %.2fs - %s", elapsed, str(e))
                 import traceback
                 self.log.debug("Traceback: %s", traceback.format_exc())
                 raise
 
-        async def add_items_to_cart_by_ids(ctx: RunContext, items: Annotated[list[dict], "List of items to add to cart. Each item should be a dict with at least 'id' (product ID like 'blk-101') and 'quantity' (number). Optional fields: 'name', 'price'. You can use items from search_items_for_cart results or construct them with the IDs from search results."]):
+        async def add_items_to_cart_by_ids(ctx: RunContext, items: Annotated[list[dict], "List of items to add to cart. Each item should be a dict with at least 'id' (product ID like 'blk-101') and 'quantity' (number). Optional fields: 'name', 'price'. You can use items from search_items results or construct them with the IDs from search results."]):
             """Add multiple items to cart by their IDs (after user confirms search results).
             
-            Use this after search_items_for_cart when user confirms they want to add items.
+            Use this after search_items when user confirms they want to add items.
             Each item should be a dict with:
             - 'id' (required): Product ID from search results (e.g., 'blk-101', 'blk-029')
             - 'quantity' (required): Number of items to add (defaults to 1 if not provided)
             - 'name' (optional): Item name for reference
             - 'price' (optional): Item price for reference
             
-            You can pass the 'found_items' array from search_items_for_cart, or construct items using the IDs from the search results.
+            You can pass the 'found_items' array from search_items, or construct items using the IDs from the search results.
             Uses sequential processing for reliability.
             """
             import time
@@ -491,7 +499,7 @@ class UnifiedAgent:
             
             This tool searches all items in parallel, maps results, and adds them to cart in parallel.
             Much faster than calling search_products and add_to_cart separately.
-            NOTE: For better UX, prefer using search_items_for_cart first, then add_items_to_cart_by_ids after user confirmation.
+            NOTE: For better UX, prefer using search_items first, then add_items_to_cart_by_ids after user confirmation.
             """
             import time
             start_time = time.time()
@@ -647,7 +655,7 @@ class UnifiedAgent:
             """Plan ingredients needed for a recipe. Returns the ingredient list and asks user to confirm before buying.
             
             Use this tool when user asks to buy items for a recipe/dish. This is step 1 - it only plans, doesn't add to cart.
-            After showing the plan, ask user if they want to buy these items from Blinkit.
+            After showing the plan, ask user if they want to buy these items from supermarket.
             """
             import time
             tool_start = time.time()
@@ -741,9 +749,9 @@ class UnifiedAgent:
         
         # Register tools
         self.agent.tool(get_product)  # Get product details by ID
-        self.agent.tool(search_items_for_cart)  # Search items (single or multiple) - returns results without adding
+        self.agent.tool(search_items)  # Search items (single or multiple) - returns results without adding
         self.agent.tool(add_items_to_cart_by_ids)  # Add items (single or multiple) to cart by IDs
-        # Removed redundant tools: search_products and add_to_cart (use search_items_for_cart and add_items_to_cart_by_ids instead)
+        # Removed redundant tools: search_products and add_to_cart (use search_items and add_items_to_cart_by_ids instead)
         # self.agent.tool(search_and_add_items)  # Efficient combined search+add (legacy, prefer two-step flow)
         self.agent.tool(plan_recipe_ingredients_tool)  # Plan ingredients for recipe shopping flow
         self.agent.tool(view_cart)  # View cart summary
@@ -819,7 +827,7 @@ class UnifiedAgent:
             return 1
 
     async def _pick_and_add(self, ingredient: Any, limit: int = 3) -> dict | None:
-        """Search Blinkit and add the first hit to cart."""
+        """Search supermarket and add the first hit to cart."""
         await self._ensure_blinkit()
         queries = [ingredient.name]
         key = ingredient.name.lower().strip()
@@ -864,7 +872,7 @@ class UnifiedAgent:
         }
 
     async def build_cart_for_plan(self, ingredients: list) -> dict:
-        """Attempt to add each ingredient to the Blinkit cart."""
+        """Attempt to add each ingredient to the supermarket cart."""
         added_items = []
         skipped = []
         for ingredient in ingredients:
@@ -895,8 +903,61 @@ class UnifiedAgent:
         
         try:
             plan_result = await self.plan_agent.run(text)
-            ingredients: list = getattr(plan_result, "output", plan_result.output)
+            raw_output = getattr(plan_result, "output", plan_result.output)
             plan_time = time.time() - plan_start_time
+            
+            # Post-processing: Handle both formats (Option 3 - fallback)
+            ingredients: list[self.IngredientItem] = []
+            
+            if isinstance(raw_output, list):
+                # Direct list format (expected)
+                self.log.debug("✅ Received direct list format")
+                # Ensure all items are IngredientItem objects
+                ingredients = []
+                for item in raw_output:
+                    if isinstance(item, self.IngredientItem):
+                        ingredients.append(item)
+                    elif isinstance(item, dict):
+                        try:
+                            ingredients.append(self.IngredientItem(**item))
+                        except Exception as e:
+                            self.log.warning("⚠️  Failed to convert item to IngredientItem: %s - %s", item, e)
+                            # Try to create with minimal fields
+                            ingredients.append(self.IngredientItem(
+                                name=item.get('name', 'unknown'),
+                                quantity=item.get('quantity'),
+                                optional=item.get('optional', False)
+                            ))
+                    else:
+                        self.log.warning("⚠️  Unexpected item type in list: %s", type(item))
+                        ingredients.append(item)
+            elif isinstance(raw_output, dict):
+                # Dict format (fallback handling)
+                self.log.warning("⚠️  Model returned dict format instead of list. Extracting ingredients...")
+                if 'ingredients' in raw_output:
+                    ingredients_data = raw_output['ingredients']
+                    if isinstance(ingredients_data, list):
+                        # Convert dict items to IngredientItem objects
+                        ingredients = [
+                            self.IngredientItem(**item) if isinstance(item, dict) else item
+                            for item in ingredients_data
+                        ]
+                        self.log.info("✅ Extracted %d ingredients from dict format", len(ingredients))
+                    else:
+                        self.log.error("❌ 'ingredients' key is not a list: %s", type(ingredients_data))
+                        raise ValueError("Invalid format: 'ingredients' is not a list")
+                else:
+                    self.log.error("❌ Dict format missing 'ingredients' key. Keys: %s", list(raw_output.keys()))
+                    raise ValueError("Invalid format: dict missing 'ingredients' key")
+            else:
+                # Try to convert to list if it's iterable
+                try:
+                    self.log.warning("⚠️  Unknown format, attempting to convert to list...")
+                    ingredients = list(raw_output) if raw_output else []
+                except (TypeError, ValueError) as e:
+                    self.log.error("❌ Cannot extract ingredients from output type: %s", type(raw_output))
+                    raise ValueError(f"Cannot extract ingredients from output: {type(raw_output)}") from e
+            
             self.log.info("📝 Got %d ingredients (took %.2fs)", len(ingredients), plan_time)
             
             # Log all ingredients for debugging
@@ -918,8 +979,8 @@ class UnifiedAgent:
                 opt_str = " (optional)" if ing.optional else ""
                 response_parts.append(f"{idx}. **{ing.name}**{qty_str}{opt_str}\n")
             
-            response_parts.append("\n🛒 **Would you like me to help you find and purchase these items from Blinkit?**\n")
-            response_parts.append("Just say 'yes' or 'proceed' and I'll search for them and add to your cart!\n")
+            # response_parts.append("\n🛒 **Would you like me to help you find and purchase these items from Blinkit?**\n")
+            # response_parts.append("Just say 'yes' or 'proceed' and I'll search for them and add to your cart!\n")
             
             formatted_response = "".join(response_parts)
             self.log.debug("Formatted response length: %d chars", len(formatted_response))
@@ -997,8 +1058,8 @@ class UnifiedAgent:
         response_parts.append(f"  • Total items: {cart_items}\n")
         response_parts.append(f"  • **Total amount: ₹{cart_total:.2f}**\n")
         
-        response_parts.append("\n💳 **Next steps:**\n")
-        response_parts.append("  Would you like to proceed to checkout and payment? Just say 'yes' or 'proceed to payment' and I'll help you complete the transaction!\n")
+        # response_parts.append("\n💳 **Next steps:**\n")
+        # response_parts.append("  Would you like to proceed to checkout and payment? Just say 'yes' or 'proceed to payment' and I'll help you complete the transaction!\n")
 
         formatted_response = "".join(response_parts)
         
