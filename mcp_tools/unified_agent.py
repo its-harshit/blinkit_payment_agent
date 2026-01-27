@@ -7,9 +7,10 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.exceptions import ToolRetryError
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 try:
     from .mcp_client import McpClient
@@ -110,11 +111,43 @@ class UnifiedAgent:
             optional: bool = Field(default=False, description="Whether the ingredient can be skipped")
         self.IngredientItem = IngredientItem
         
-        # Use list as primary output type (what model should return)
-        # Dict format will be handled in post-processing as fallback
+        # Create a wrapper model that accepts both list and dict formats
+        class IngredientListResponse(BaseModel):
+            """Wrapper that accepts both list format and dict format with 'ingredients' key."""
+            ingredients: list[IngredientItem] = Field(default_factory=list)
+            
+            @model_validator(mode='before')
+            @classmethod
+            def handle_multiple_formats(cls, data):
+                """Handle both list format and dict format with 'ingredients' key."""
+                if isinstance(data, list):
+                    # Direct list format - wrap it
+                    return {'ingredients': data}
+                elif isinstance(data, dict):
+                    # Already a dict - check if it has 'ingredients' key
+                    if 'ingredients' in data:
+                        return data
+                    elif 'response' in data and isinstance(data.get('response'), dict) and 'ingredients' in data['response']:
+                        # Handle case where it's wrapped in a 'response' field
+                        return data['response']
+                    else:
+                        # Dict without 'ingredients' key - try to find list values
+                        # Check if any value is a list that looks like ingredients
+                        for key, value in data.items():
+                            if isinstance(value, list) and len(value) > 0:
+                                # Check if it looks like a list of ingredient dicts
+                                if all(isinstance(item, dict) and 'name' in item for item in value):
+                                    return {'ingredients': value}
+                        # No valid ingredients found
+                        return {'ingredients': []}
+                else:
+                    # Unknown format
+                    return {'ingredients': []}
+        
+        # Use wrapper model that accepts both formats
         self.plan_agent = Agent(
             model=model,
-            output_type=list[IngredientItem],  # type: ignore[arg-type]
+            output_type=IngredientListResponse,  # type: ignore[arg-type]
             instructions=(
                 "You are a recipe ingredient planner. Plan ALL essential ingredients for the given dish.\n"
                 "\n"
@@ -906,13 +939,17 @@ class UnifiedAgent:
             raw_output = getattr(plan_result, "output", plan_result.output)
             plan_time = time.time() - plan_start_time
             
-            # Post-processing: Handle both formats (Option 3 - fallback)
+            # Extract ingredients from IngredientListResponse wrapper
             ingredients: list[self.IngredientItem] = []
             
-            if isinstance(raw_output, list):
-                # Direct list format (expected)
+            # The output should now be an IngredientListResponse object
+            if hasattr(raw_output, 'ingredients'):
+                # It's the wrapper model - extract the ingredients list
+                ingredients = raw_output.ingredients
+                self.log.debug("✅ Extracted ingredients from IngredientListResponse wrapper")
+            elif isinstance(raw_output, list):
+                # Direct list format (fallback - shouldn't happen with new wrapper)
                 self.log.debug("✅ Received direct list format")
-                # Ensure all items are IngredientItem objects
                 ingredients = []
                 for item in raw_output:
                     if isinstance(item, self.IngredientItem):
@@ -922,7 +959,6 @@ class UnifiedAgent:
                             ingredients.append(self.IngredientItem(**item))
                         except Exception as e:
                             self.log.warning("⚠️  Failed to convert item to IngredientItem: %s - %s", item, e)
-                            # Try to create with minimal fields
                             ingredients.append(self.IngredientItem(
                                 name=item.get('name', 'unknown'),
                                 quantity=item.get('quantity'),
@@ -930,14 +966,12 @@ class UnifiedAgent:
                             ))
                     else:
                         self.log.warning("⚠️  Unexpected item type in list: %s", type(item))
-                        ingredients.append(item)
             elif isinstance(raw_output, dict):
                 # Dict format (fallback handling)
-                self.log.warning("⚠️  Model returned dict format instead of list. Extracting ingredients...")
+                self.log.warning("⚠️  Model returned dict format. Extracting ingredients...")
                 if 'ingredients' in raw_output:
                     ingredients_data = raw_output['ingredients']
                     if isinstance(ingredients_data, list):
-                        # Convert dict items to IngredientItem objects
                         ingredients = [
                             self.IngredientItem(**item) if isinstance(item, dict) else item
                             for item in ingredients_data
@@ -950,13 +984,8 @@ class UnifiedAgent:
                     self.log.error("❌ Dict format missing 'ingredients' key. Keys: %s", list(raw_output.keys()))
                     raise ValueError("Invalid format: dict missing 'ingredients' key")
             else:
-                # Try to convert to list if it's iterable
-                try:
-                    self.log.warning("⚠️  Unknown format, attempting to convert to list...")
-                    ingredients = list(raw_output) if raw_output else []
-                except (TypeError, ValueError) as e:
-                    self.log.error("❌ Cannot extract ingredients from output type: %s", type(raw_output))
-                    raise ValueError(f"Cannot extract ingredients from output: {type(raw_output)}") from e
+                self.log.error("❌ Cannot extract ingredients from output type: %s", type(raw_output))
+                raise ValueError(f"Cannot extract ingredients from output: {type(raw_output)}")
             
             self.log.info("📝 Got %d ingredients (took %.2fs)", len(ingredients), plan_time)
             
