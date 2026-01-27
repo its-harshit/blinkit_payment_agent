@@ -107,7 +107,7 @@ class UnifiedAgent:
         # lightweight planner for ingredient extraction
         class IngredientItem(BaseModel):
             name: str = Field(description="Ingredient name")
-            quantity: str | None = Field(description="Human-friendly quantity, e.g., '2 cups'")
+            quantity: str | None = Field(default=None, description="Human-friendly quantity, e.g., '2 cups'")
             optional: bool = Field(default=False, description="Whether the ingredient can be skipped")
         self.IngredientItem = IngredientItem
         
@@ -119,27 +119,46 @@ class UnifiedAgent:
             @model_validator(mode='before')
             @classmethod
             def handle_multiple_formats(cls, data):
-                """Handle both list format and dict format with 'ingredients' key."""
+                """Handle multiple LLM output formats and extract ingredients."""
                 if isinstance(data, list):
                     # Direct list format - wrap it
                     return {'ingredients': data}
                 elif isinstance(data, dict):
-                    # Already a dict - check if it has 'ingredients' key
-                    if 'ingredients' in data:
+                    # Check various possible wrapper formats the LLM might use
+                    
+                    # Format 1: Direct {'ingredients': [...]}
+                    if 'ingredients' in data and isinstance(data['ingredients'], list):
                         return data
-                    elif 'response' in data and isinstance(data.get('response'), dict) and 'ingredients' in data['response']:
-                        # Handle case where it's wrapped in a 'response' field
-                        return data['response']
-                    else:
-                        # Dict without 'ingredients' key - try to find list values
-                        # Check if any value is a list that looks like ingredients
-                        for key, value in data.items():
-                            if isinstance(value, list) and len(value) > 0:
-                                # Check if it looks like a list of ingredient dicts
-                                if all(isinstance(item, dict) and 'name' in item for item in value):
-                                    return {'ingredients': value}
-                        # No valid ingredients found
-                        return {'ingredients': []}
+                    
+                    # Format 2: {'response': {'ingredients': [...]}}
+                    if 'response' in data and isinstance(data.get('response'), dict):
+                        resp = data['response']
+                        if 'ingredients' in resp and isinstance(resp['ingredients'], list):
+                            return resp
+                    
+                    # Format 3: {'name': 'final_result', 'parameters': {'ingredients': [...]}}
+                    # This is a tool-call style response
+                    if 'parameters' in data and isinstance(data.get('parameters'), dict):
+                        params = data['parameters']
+                        if 'ingredients' in params and isinstance(params['ingredients'], list):
+                            return params
+                    
+                    # Format 4: {'result': {'ingredients': [...]}} or similar
+                    for key in ['result', 'data', 'output']:
+                        if key in data and isinstance(data.get(key), dict):
+                            inner = data[key]
+                            if 'ingredients' in inner and isinstance(inner['ingredients'], list):
+                                return inner
+                    
+                    # Format 5: Dict with a list value that looks like ingredients
+                    for key, value in data.items():
+                        if isinstance(value, list) and len(value) > 0:
+                            # Check if it looks like a list of ingredient dicts
+                            if all(isinstance(item, dict) and 'name' in item for item in value):
+                                return {'ingredients': value}
+                    
+                    # No valid ingredients found
+                    return {'ingredients': []}
                 else:
                     # Unknown format
                     return {'ingredients': []}
@@ -151,31 +170,44 @@ class UnifiedAgent:
             instructions=(
                 "You are a recipe ingredient planner. Plan ALL essential ingredients for the given dish.\n"
                 "\n"
-                "**CRITICAL:**\n"
+                "**CRITICAL RULES:**\n"
                 "- Do NOT extract words from input. PLAN the complete ingredient list.\n"
                 "- Use simple, common names (e.g., 'onion', not 'yellow onion' or 'red onion').\n"
                 "- Return 6-7 essential ingredients maximum.\n"
+                "- ONLY return the JSON object in the exact format shown below. No extra text or wrapping.\n"
                 "\n"
-                "**OUTPUT FORMAT:**\n"
-                "Return a JSON array of objects. Each object must have:\n"
+                "**REQUIRED OUTPUT FORMAT:**\n"
+                "Return a JSON object with an 'ingredients' key containing an array:\n"
+                "```json\n"
+                "{\"ingredients\": [\n"
+                "  {\"name\": \"ingredient1\", \"quantity\": \"amount\", \"optional\": false},\n"
+                "  {\"name\": \"ingredient2\", \"quantity\": \"amount\", \"optional\": false}\n"
+                "]}\n"
+                "```\n"
+                "\n"
+                "Each ingredient object must have:\n"
                 "- name: string (simple ingredient name)\n"
                 "- quantity: string or null (e.g., '2 cups', '1 kg', or null)\n"
                 "- optional: boolean (true only if can be skipped)\n"
                 "\n"
-                "**EXAMPLES:**\n"
+                "**CORRECT EXAMPLE:**\n"
                 "Input: 'egg biryani'\n"
-                "Output: [\n"
-                "  {'name': 'basmati rice', 'quantity': '1 cup', 'optional': False},\n"
-                "  {'name': 'eggs', 'quantity': '6 pieces', 'optional': False},\n"
-                "  {'name': 'onion', 'quantity': '2 medium', 'optional': False},\n"
-                "  {'name': 'tomato', 'quantity': '2 medium', 'optional': False},\n"
-                "  {'name': 'ginger-garlic paste', 'quantity': '1 tbsp', 'optional': False},\n"
-                "  {'name': 'turmeric powder', 'quantity': '1 tsp', 'optional': False},\n"
-                "  {'name': 'ghee', 'quantity': '2 tbsp', 'optional': False}\n"
-                "]\n"
+                "Output:\n"
+                "{\"ingredients\": [\n"
+                "  {\"name\": \"basmati rice\", \"quantity\": \"1 cup\", \"optional\": false},\n"
+                "  {\"name\": \"eggs\", \"quantity\": \"6 pieces\", \"optional\": false},\n"
+                "  {\"name\": \"onion\", \"quantity\": \"2 medium\", \"optional\": false},\n"
+                "  {\"name\": \"tomato\", \"quantity\": \"2 medium\", \"optional\": false},\n"
+                "  {\"name\": \"ginger-garlic paste\", \"quantity\": \"1 tbsp\", \"optional\": false},\n"
+                "  {\"name\": \"biryani masala\", \"quantity\": \"1 tbsp\", \"optional\": false},\n"
+                "  {\"name\": \"ghee\", \"quantity\": \"2 tbsp\", \"optional\": false}\n"
+                "]}\n"
                 "\n"
-                "**WRONG FORMAT (DO NOT USE):**\n"
-                "{{'ingredients': [...]}}  ← This is WRONG, do not wrap in a dict!\n"
+                "**WRONG FORMATS (NEVER USE THESE):**\n"
+                "- [...] ← Raw array without wrapper\n"
+                "- {\"name\": \"final_result\", \"parameters\": {...}} ← Tool call format\n"
+                "- {\"response\": {...}} ← Extra wrapper\n"
+                "- Any text before or after the JSON\n"
             ),
         )
         # alias map to improve match rate
