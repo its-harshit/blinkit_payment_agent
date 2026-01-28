@@ -20,6 +20,11 @@ from .unified_agent import UnifiedAgent
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Feature flag: enable/disable true model streaming.
+# - When True  (default): use UnifiedAgent.run(..., writer=...) + model streaming
+# - When False: fall back to non-streaming agent.run(...) and fake chunking on the server side
+ENABLE_MODEL_STREAMING = os.getenv("ENABLE_MODEL_STREAMING", "1") in ("1", "true", "True")
+
 app = FastAPI(title="Unified NPCI + Shopping Agent API", version="0.1.0")
 
 # CORS middleware for frontend
@@ -147,34 +152,84 @@ async def chat_stream(body: ChatRequest) -> StreamingResponse:
       data: {"type": "tool_result", "data": {...}}
       data: {"type": "error", "message": "..."}
     """
-    
     async def sse_generator() -> AsyncGenerator[bytes, None]:
+        """
+        SSE generator with two modes controlled by ENABLE_MODEL_STREAMING:
+        - True:  use UnifiedAgent.run(..., writer=...) and real model streaming
+        - False: call agent.run(...) once and fake-stream the final text in chunks
+        """
+        import asyncio
+
         try:
             agent, chat_id = await _get_or_create_agent(body.chat_id)
-            
+
             # Send chat_id back to frontend
             yield f"data: {json.dumps({'type': 'chat_id', 'chat_id': chat_id})}\n\n".encode("utf-8")
-            
-            # Run agent and stream response
-            response = await agent.run(body.message)
-            
-            # Format response as string if it's a dict (from plan_and_shop)
-            if isinstance(response, dict):
-                response_text = response.get("message", str(response))
+
+            if not ENABLE_MODEL_STREAMING:
+                # Non-streaming agent call + server-side chunking (previous behavior)
+                response = await agent.run(body.message)
+
+                # Format response as string if it's a dict (e.g., from plan_and_shop)
+                if isinstance(response, dict):
+                    response_text = response.get("message", str(response))
+                else:
+                    response_text = str(response)
+
+                # Fake streaming by slicing final text into chunks
+                chunk_size = 10  # characters per SSE chunk
+                for i in range(0, len(response_text), chunk_size):
+                    chunk = response_text[i:i + chunk_size]
+                    yield f"data: {json.dumps({'type': 'content', 'text': chunk})}\n\n".encode("utf-8")
+
+                # If response contains structured data (like cart info), send it as tool_result
+                if isinstance(response, dict) and "cart" in response:
+                    yield f"data: {json.dumps({'type': 'tool_result', 'data': response})}\n\n".encode("utf-8")
+
             else:
-                response_text = str(response)
-            
-            # Stream response in chunks (simulate streaming by sending character by character)
-            # In a real implementation, you'd use pydantic-ai's streaming API
-            chunk_size = 10  # Send 10 characters at a time for smoother streaming
-            for i in range(0, len(response_text), chunk_size):
-                chunk = response_text[i:i + chunk_size]
-                yield f"data: {json.dumps({'type': 'content', 'text': chunk})}\n\n".encode("utf-8")
-            
-            # If response contains structured data (like cart info), send it as tool_result
-            if isinstance(response, dict) and "cart" in response:
-                yield f"data: {json.dumps({'type': 'tool_result', 'data': response})}\n\n".encode("utf-8")
-            
+                # True model streaming using UnifiedAgent.run(..., writer=...)
+                queue: "asyncio.Queue[Optional[str]]" = asyncio.Queue()
+                final_response_container: dict = {"response": None}
+
+                async def writer(chunk: dict) -> None:
+                    # Called by UnifiedAgent.run for each streamed text chunk
+                    text = chunk.get("content", "")
+                    if text:
+                        await queue.put(text)
+
+                async def run_agent() -> None:
+                    try:
+                        response = await agent.run(body.message, writer=writer)
+                        final_response_container["response"] = response
+                    except Exception as e:
+                        # Push error marker into queue so outer loop can send SSE error
+                        await queue.put(f"__ERROR__:{str(e)}")
+                    finally:
+                        # Signal completion
+                        await queue.put(None)
+
+                # Kick off agent in background
+                asyncio.create_task(run_agent())
+
+                # Drain queue and stream SSE events
+                while True:
+                    chunk = await queue.get()
+                    if chunk is None:
+                        break
+
+                    if isinstance(chunk, str) and chunk.startswith("__ERROR__:"):
+                        error_msg = {"type": "error", "message": chunk[len("__ERROR__:") :]}
+                        yield f"data: {json.dumps(error_msg)}\n\n".encode("utf-8")
+                        break
+
+                    # Normal content chunk
+                    yield f"data: {json.dumps({'type': 'content', 'text': chunk})}\n\n".encode("utf-8")
+
+                # After streaming text, if we have a structured dict (e.g. cart info), send it as tool_result
+                response = final_response_container["response"]
+                if isinstance(response, dict) and "cart" in response:
+                    yield f"data: {json.dumps({'type': 'tool_result', 'data': response})}\n\n".encode("utf-8")
+
         except Exception as e:
             logger.error(f"Error in chat stream: {e}", exc_info=True)
             error_msg = {"type": "error", "message": str(e)}

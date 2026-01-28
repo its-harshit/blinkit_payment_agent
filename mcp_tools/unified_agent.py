@@ -1133,11 +1133,19 @@ class UnifiedAgent:
             "cart_total": cart_total,
         }
 
-    async def run(self, user_message: str):
-        """Run agent with conversation history (last 3-4 exchanges)."""
+    async def run(self, user_message: str, writer=None):
+        """Run agent with conversation history (last 3-4 exchanges).
+        
+        Args:
+            user_message: The user's message to process
+            writer: Optional callable that receives streaming chunks as dict with 'content' key.
+                   If provided, enables streaming mode using stream_text().
+                   If None, uses non-streaming mode (default).
+        """
         import time
         run_start_time = time.time()
-        self.log.info("🤖 AGENT RUN: Processing user message (history: %d exchanges)", len(self.conversation_history))
+        self.log.info("🤖 AGENT RUN: Processing user message (history: %d exchanges, streaming=%s)", 
+                     len(self.conversation_history), writer is not None)
         self.log.debug("User message: %s", user_message[:100] + "..." if len(user_message) > 100 else user_message)
 
         # Fast-path for "add all ingredients" / "shop them all" intent
@@ -1200,22 +1208,110 @@ class UnifiedAgent:
             # Run agent (without message_history to avoid format issues)
             self.log.debug("Sending request to agent model...")
             agent_start = time.time()
-            resp = await self.agent.run(full_message)
-            agent_run_time = time.time() - agent_start
-            assistant_response = getattr(resp, "output", resp.output)
+
+
+            #   without streaming
+            # resp = await self.agent.run(full_message)
+            # agent_run_time = time.time() - agent_start
+            # assistant_response = getattr(resp, "output", resp.output)
             
-            # Check if tools were used and log timing breakdown
-            tool_call_times = []
-            if hasattr(resp, 'all_messages'):
-                messages = resp.all_messages()
-                tool_calls = [msg for msg in messages if hasattr(msg, 'tool_calls') and msg.tool_calls]
-                if tool_calls:
-                    self.log.info("🔧 Agent used %d tool call(s) in this run", len(tool_calls))
-                    # Try to extract tool call timing if available
-                    for msg in tool_calls:
-                        for tool_call in msg.tool_calls:
-                            tool_name = getattr(tool_call, 'name', 'unknown')
-                            self.log.debug("  Tool called: %s", tool_name)
+            # # Check if tools were used and log timing breakdown
+            # tool_call_times = []
+            # if hasattr(resp, 'all_messages'):
+            #     messages = resp.all_messages()
+            #     tool_calls = [msg for msg in messages if hasattr(msg, 'tool_calls') and msg.tool_calls]
+            #     if tool_calls:
+            #         self.log.info("🔧 Agent used %d tool call(s) in this run", len(tool_calls))
+            #         # Try to extract tool call timing if available
+            #         for msg in tool_calls:
+            #             for tool_call in msg.tool_calls:
+            #                 tool_name = getattr(tool_call, 'name', 'unknown')
+            #                 self.log.debug("  Tool called: %s", tool_name)
+            
+            
+            if writer is None:
+                # Non-streaming path (default behavior)
+                resp = await self.agent.run(full_message)
+                agent_run_time = time.time() - agent_start
+                assistant_response = getattr(resp, "output", resp.output)
+                
+                # Check if tools were used and log timing breakdown
+                if hasattr(resp, 'all_messages'):
+                    messages = resp.all_messages()
+                    tool_calls = [msg for msg in messages if hasattr(msg, 'tool_calls') and msg.tool_calls]
+                    if tool_calls:
+                        self.log.info("🔧 Agent used %d tool call(s) in this run", len(tool_calls))
+                        # Try to extract tool call timing if available
+                        for msg in tool_calls:
+                            for tool_call in msg.tool_calls:
+                                tool_name = getattr(tool_call, 'name', 'unknown')
+                                self.log.debug("  Tool called: %s", tool_name)
+            else:
+                # Streaming path using stream_text()
+                import inspect
+
+                final_output = ""
+                previous_output = ""
+                tool_calls_count = 0
+                first_chunk_time = None
+                chunk_count = 0
+
+                async with self.agent.run_stream(full_message) as stream_result:
+                    # Stream text chunks as they arrive. stream_text() may yield the
+                    # full-so-far text, so we diff and only send the new suffix.
+                    async for text_chunk in stream_result.stream_text():
+                        if text_chunk is None:
+                            continue
+
+                        chunk_count += 1
+                        if first_chunk_time is None:
+                            first_chunk_time = time.time()
+                            time_to_first_chunk = first_chunk_time - agent_start
+                            self.log.info("📡 First chunk arrived after %.2fs", time_to_first_chunk)
+
+                        text_str = str(text_chunk)
+
+                        # Compute only the new part to avoid duplicates
+                        if text_str.startswith(previous_output):
+                            new_part = text_str[len(previous_output) :]
+                        else:
+                            # Fallback if something unexpected happens
+                            new_part = text_str
+
+                        final_output = text_str
+                        previous_output = text_str
+
+                        if new_part:
+                            # Support both sync and async writer callbacks
+                            if writer is not None:
+                                if inspect.iscoroutinefunction(writer):
+                                    await writer({"content": new_part})
+                                else:
+                                    writer({"content": new_part})
+                    
+                    if first_chunk_time:
+                        self.log.info("📡 Streaming complete: %d chunks received, first chunk at %.2fs", 
+                                     chunk_count, first_chunk_time - agent_start)
+
+                    # Ensure we have the final full output for history
+                    if not final_output:
+                        final_resp = await stream_result.get_output()
+                        final_output = getattr(final_resp, "output", final_resp.output) if final_resp else ""
+
+                    # Check for tool calls in the stream result
+                    if hasattr(stream_result, 'all_messages'):
+                        messages = stream_result.all_messages()
+                        tool_calls = [msg for msg in messages if hasattr(msg, 'tool_calls') and msg.tool_calls]
+                        tool_calls_count = len(tool_calls)
+                        if tool_calls:
+                            self.log.info("🔧 Agent used %d tool call(s) in this run", tool_calls_count)
+                            for msg in tool_calls:
+                                for tool_call in msg.tool_calls:
+                                    tool_name = getattr(tool_call, 'name', 'unknown')
+                                    self.log.debug("  Tool called: %s", tool_name)
+                
+                agent_run_time = time.time() - agent_start
+                assistant_response = final_output
             
             elapsed = time.time() - run_start_time
             self.log.info("✅ AGENT SUCCESS: Response generated (length: %d chars)", len(str(assistant_response)))
