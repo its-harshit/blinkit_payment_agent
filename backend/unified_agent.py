@@ -182,12 +182,14 @@ class UnifiedAgent:
 
         self.agent = Agent(model=model, instructions=instructions)
         # Register tools from modules
-        from .tools import make_shopping_tools, make_payment_tools, make_travel_tools
+        from .tools import make_shopping_tools, make_payment_tools, make_travel_tools, make_cab_tools
         for tool in make_shopping_tools(self):
             self.agent.tool(tool)
         for tool in make_payment_tools(self):
             self.agent.tool(tool)
         for tool in make_travel_tools(self):
+            self.agent.tool(tool)
+        for tool in make_cab_tools(self):
             self.agent.tool(tool)
 
     async def _ensure_blinkit(self):
@@ -216,7 +218,7 @@ class UnifiedAgent:
         if self.travel_client is None:
             self.log.info("🔌 Initializing Travel MCP client...")
             try:
-                self.travel_client = McpClient("travel-unified", TRAVEL_CMD, cwd=str(SERVERS_DIR), timeout=5.0)
+                self.travel_client = McpClient("travel-unified", TRAVEL_CMD, cwd=str(SERVERS_DIR), timeout=30.0)
                 await self.travel_client.initialize()
                 self.log.info("✅ Travel MCP client initialized successfully")
             except Exception as e:
