@@ -1,0 +1,13 @@
+{
+  "servers": {
+    "payment": {
+      "command": "node",
+      "args": ["backend/servers/dist/payment-server.js"]
+    },
+    "blinkit": {
+      "command": "node",
+      "args": ["backend/servers/dist/blinkit-server.js"]
+    }
+  }
+}
+
