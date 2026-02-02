@@ -124,9 +124,9 @@ So when resolving cab segment we have: arrival airport, hotel address, city, and
 
 **Deliverables:**
 
-- [x] Travel server: `TRIPS` store, `travel.create_trip`, `travel.get_trip`, flight/hotel/cab bookings accept optional `tripId` and link to trip.
-- [x] Travel server: `search_cabs(tripId, segment)` resolves origin/destination/city from trip; same response shape as standalone search.
-- [x] Python: `create_trip_tool`, `get_trip_tool`; cab search supports trip_id + segment; instructions updated for trip-based flow and “what’s in my trip?”.
+- [ ] Travel server: `TRIPS` store, `travel.create_trip`, `travel.get_trip`, flight/hotel/cab bookings accept optional `tripId` and link to trip.
+- [ ] Travel server: `search_cabs(tripId, segment)` resolves origin/destination/city from trip; same response shape as standalone search.
+- [ ] Python: `create_trip_tool`, `get_trip_tool`; cab search supports trip_id + segment; instructions updated for trip-based flow and “what’s in my trip?”.
 
 ---
 

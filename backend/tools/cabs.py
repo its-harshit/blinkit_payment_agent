@@ -13,27 +13,19 @@ def make_cab_tools(agent: Any):
 
     async def search_cabs_tool(
         ctx: RunContext,
-        origin: Annotated[str | None, "Pickup place (standalone cab). Omit when using trip_id + segment."] = None,
-        destination: Annotated[str | None, "Drop place (standalone cab). Omit when using trip_id + segment."] = None,
-        city: Annotated[str | None, "City code for standalone cab (e.g., DEL, GOA). Omit when using trip_id + segment."] = None,
-        trip_id: Annotated[str | None, "Trip ID from create_trip (when part of trip flow). Use with segment."] = None,
-        segment: Annotated[str | None, "airport_to_hotel or hotel_to_airport (with trip_id). Server resolves origin/destination from trip."] = None,
+        origin: Annotated[str, "Pickup place name or address (e.g., Connaught Place, IGI Airport)"],
+        destination: Annotated[str, "Drop place name or address (e.g., IGI Airport, hotel address)"],
+        city: Annotated[str, "City code for the ride (e.g., DEL, BOM, GOA, BLR). Required for same-city validation."],
     ):
-        """Search cab options. Standalone: pass origin, destination, city. Trip flow: pass trip_id and segment (airport_to_hotel or hotel_to_airport)."""
+        """Search cab options between two places within a city. Same-city only; always returns 2-3 options (Economy, Sedan, SUV)."""
         start_time = time.time()
-        if trip_id and segment:
-            agent.log.info("🚕 TOOL CALL: search_cabs_tool(trip_id=%s, segment=%s)", trip_id, segment)
-            params = {"tripId": trip_id, "segment": segment}
-        else:
-            agent.log.info(
-                "🚕 TOOL CALL: search_cabs_tool(origin=%s, destination=%s, city=%s)",
-                origin, destination, city,
-            )
-            if not origin or not destination or not city:
-                raise ValueError("For standalone cab search pass origin, destination, and city; or pass trip_id and segment for trip flow.")
-            params = {"origin": origin, "destination": destination, "city": city}
+        agent.log.info(
+            "🚕 TOOL CALL: search_cabs_tool(origin=%s, destination=%s, city=%s)",
+            origin, destination, city,
+        )
         try:
             await agent._ensure_travel()
+            params = {"origin": origin, "destination": destination, "city": city}
             agent.log.debug("Calling MCP tool: travel.search_cabs with params: %s", params)
             result = await agent.travel_client.call_tool("travel.search_cabs", params)
             data = parse_mcp_text_result(result)
@@ -62,13 +54,12 @@ def make_cab_tools(agent: Any):
         origin: Annotated[str | None, "Same pickup place as in search_cabs (so fare/ETA match)"] = None,
         destination: Annotated[str | None, "Same drop place as in search_cabs"] = None,
         city: Annotated[str | None, "Same city as in search_cabs"] = None,
-        trip_id: Annotated[str | None, "Optional trip ID to link this cab booking to the trip"] = None,
     ):
-        """Book a selected cab. Pass origin, destination, city from search so fare/ETA match. Pass trip_id to link to trip."""
+        """Book a selected cab. Pass origin, destination, city from the search result so fare and ETA match the options shown."""
         start_time = time.time()
         agent.log.info(
-            "🚕 TOOL CALL: book_cab_tool(cab_id=%s, passenger_name=%s, trip_id=%s)",
-            cab_id, passenger_name, trip_id,
+            "🚕 TOOL CALL: book_cab_tool(cab_id=%s, passenger_name=%s)",
+            cab_id, passenger_name,
         )
         try:
             await agent._ensure_travel()
@@ -79,8 +70,6 @@ def make_cab_tools(agent: Any):
                 params["destination"] = destination
             if city is not None:
                 params["city"] = city
-            if trip_id is not None:
-                params["tripId"] = trip_id
             agent.log.debug("Calling MCP tool: travel.book_cab with params: %s", params)
             result = await agent.travel_client.call_tool("travel.book_cab", params)
             booking = parse_mcp_text_result(result, "booking") or parse_mcp_text_result(result)

@@ -19,4 +19,10 @@ CORE_INSTRUCTIONS = (
     "3. Use the tool results to respond to the user\n"
     "4. YOU DON'T NEED TO TELL THE USER THAN YOU WILL BE CALLING THIS TOOL, JUST CALL THE TOOL IMMEDIATELY.\n"
     "\n"
+    "**USER'S CONTACT (NAME, EMAIL, MOBILE):** Do NOT ask the user for name, email, or mobile number. Always use: name \"Harshit\", email \"harshit@gmail.com\", mobile \"9876543210\". This applies to travel bookings, login/OTP flows, and any tool that needs these fields.\n"
+    "\n"
+    "**CONVERSATION SUMMARY / CONTEXT:** When you see a **Conversation summary** or **Previous conversation**, use it so you do NOT re-ask for details already stated. "
+    "For **travel**: use destination city, dates, and guest count from the flight/booking when the user then asks for hotel or cab (e.g. after a flight to Goa on Feb 2, use city=GOA, check_in=that date, guests=1). "
+    "For **shopping** use recipe/cart state; for **other** use names, contact, preferences. Only ask for what is truly missing.\n"
+    "\n"
 )

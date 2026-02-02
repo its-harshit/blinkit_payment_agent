@@ -11,43 +11,6 @@ def make_travel_tools(agent: Any):
     """Return travel tool functions that close over the given agent."""
     assert agent is not None
 
-    async def create_trip_tool(
-        ctx: RunContext,
-        city: Annotated[str | None, "Optional destination city code (e.g., GOA, DEL)"] = None,
-    ):
-        """Create a new trip to link flight, hotel, and cab bookings. Call when user starts a multi-step travel booking."""
-        agent.log.info("📋 TOOL CALL: create_trip_tool(city=%s)", city)
-        try:
-            await agent._ensure_travel()
-            params = {}
-            if city is not None:
-                params["city"] = city
-            result = await agent.travel_client.call_tool("travel.create_trip", params)
-            data = parse_mcp_text_result(result)
-            trip = data.get("trip", data)
-            agent.log.info("✅ TOOL SUCCESS: create_trip_tool created trip %s", trip.get("tripId", "?"))
-            return trip
-        except Exception as e:
-            agent.log.error("❌ TOOL ERROR: create_trip_tool failed - %s", str(e))
-            raise
-
-    async def get_trip_tool(
-        ctx: RunContext,
-        trip_id: Annotated[str, "Trip ID from create_trip_tool"],
-    ):
-        """Get trip summary: flight booking, hotel booking, cab bookings. Use when user asks what's in their trip or what's next."""
-        agent.log.info("📋 TOOL CALL: get_trip_tool(trip_id=%s)", trip_id)
-        try:
-            await agent._ensure_travel()
-            result = await agent.travel_client.call_tool("travel.get_trip", {"tripId": trip_id})
-            data = parse_mcp_text_result(result)
-            trip = data.get("trip", data)
-            agent.log.info("✅ TOOL SUCCESS: get_trip_tool retrieved trip %s", trip.get("tripId", trip_id))
-            return trip
-        except Exception as e:
-            agent.log.error("❌ TOOL ERROR: get_trip_tool failed - %s", str(e))
-            raise
-
     async def search_flights_tool(
         ctx: RunContext,
         origin: Annotated[str, "Origin airport/city code (e.g., DEL, BLR)"],
@@ -111,13 +74,12 @@ def make_travel_tools(agent: Any):
         flight_id: Annotated[str, "Flight ID to book (from search_flights_tool)"],
         passenger_name: Annotated[str, "Passenger full name"],
         contact_email: Annotated[str, "Passenger contact email"],
-        trip_id: Annotated[str | None, "Optional trip ID from create_trip_tool to link this booking"] = None,
     ):
         """Create a held booking for a selected flight."""
         start_time = time.time()
         agent.log.info(
-            "🧾 TOOL CALL: hold_flight_booking_tool(flight_id=%s, passenger_name=%s, trip_id=%s)",
-            flight_id, passenger_name, trip_id,
+            "🧾 TOOL CALL: hold_flight_booking_tool(flight_id=%s, passenger_name=%s)",
+            flight_id, passenger_name,
         )
         try:
             await agent._ensure_travel()
@@ -126,8 +88,6 @@ def make_travel_tools(agent: Any):
                 "passengerName": passenger_name,
                 "contactEmail": contact_email,
             }
-            if trip_id is not None:
-                params["tripId"] = trip_id
             agent.log.debug("Calling MCP tool: hold_flight_booking with params: %s", params)
             result = await agent.travel_client.call_tool("hold_flight_booking", params)
             booking = parse_mcp_text_result(result, "booking") or {}
@@ -237,11 +197,10 @@ def make_travel_tools(agent: Any):
         check_in: Annotated[str, "Check-in date YYYY-MM-DD"],
         check_out: Annotated[str, "Check-out date YYYY-MM-DD"],
         guests: Annotated[int | None, "Number of guests (default 1)"] = None,
-        trip_id: Annotated[str | None, "Optional trip ID from create_trip_tool to link this booking"] = None,
     ):
         """Create a held booking for a selected hotel."""
         start_time = time.time()
-        agent.log.info("🏨 TOOL CALL: hold_hotel_booking_tool(hotel_id=%s, guest=%s, trip_id=%s)", hotel_id, guest_name, trip_id)
+        agent.log.info("🏨 TOOL CALL: hold_hotel_booking_tool(hotel_id=%s, guest=%s)", hotel_id, guest_name)
         try:
             await agent._ensure_travel()
             params = {
@@ -253,8 +212,6 @@ def make_travel_tools(agent: Any):
             }
             if guests is not None:
                 params["guests"] = guests
-            if trip_id is not None:
-                params["tripId"] = trip_id
             result = await agent.travel_client.call_tool("travel.hold_hotel_booking", params)
             booking = parse_mcp_text_result(result, "booking") or {}
             elapsed = time.time() - start_time
@@ -287,8 +244,6 @@ def make_travel_tools(agent: Any):
             raise
 
     return [
-        create_trip_tool,
-        get_trip_tool,
         search_flights_tool,
         get_flight_tool,
         hold_flight_booking_tool,

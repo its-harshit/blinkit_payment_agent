@@ -49,7 +49,26 @@ class UnifiedAgent:
         self.payment_client: McpClient | None = None
         self.travel_client: McpClient | None = None
         self.conversation_history: list[tuple[str, str]] = []  # Store (user_msg, assistant_msg) pairs
-        self.max_history_exchanges = 3  # Keep last 3-4 exchanges
+        self.max_history_exchanges = 3  # When no summary: keep last 3-4 exchanges in context
+        self.max_history_for_summariser = 12  # Keep up to 12 exchanges so we can run summariser every 3
+        self.conversation_summary: str = ""  # Updated every 3 turns by summariser; passed to main LLM when set
+
+        # Summariser agent: multi-domain (travel, shopping, NPCI, etc.), incremental merge
+        SUMMARISER_SYSTEM = (
+            "You are a conversation summariser for a support agent that handles **travel** (flights, hotels, cabs), "
+            "**shopping** (Blinkit, recipe ingredients, cart), **NPCI/UPI** (grievances, txn details), and **payments**. "
+            "Your goal is to extract the important and concrete details/facts from the conversation that need to be remembered for the context and output a summary that the main LLM can refer to for info. "
+            "You will receive either (A) a conversation excerpt only, or (B) a previous summary and new set of conversation turns. "
+            "If (A), extract the details from the convo and output a structured summary. "
+            "If (B), merge the previous summary with the new details from the turns; output an updated summary. "
+            "Include whatever is relevant to the context: **Travel** – trip type, guests, duration_days, start_date (YYYY-MM-DD), origin/destination city, "
+            "what's booked (flight/hotel/cab + IDs), what's pending, for next step (e.g. for hotel: check_in, check_out, guests, city). "
+            "**Shopping** – recipe/dish, ingredients or cart state, checkout intent. "
+            "**NPCI/UPI** – txn ID, VPA, bank, issue. **Other** – names, contact, preferences. "
+            "Keep key-value or short bullet style; use section labels (Travel:, Shopping:, etc.) when multiple domains appear; "
+            "overwrite or add as new info appears; do not duplicate."
+        )
+        self._summariser_agent = Agent(model=model, instructions=SUMMARISER_SYSTEM)
         # lightweight planner for ingredient extraction
         class IngredientItem(BaseModel):
             name: str = Field(description="Ingredient name")
@@ -224,6 +243,40 @@ class UnifiedAgent:
             except Exception as e:
                 self.log.error("❌ Failed to initialize Travel MCP client: %s", str(e))
                 raise
+
+    def _format_exchanges(self, exchanges: list[tuple[str, str]]) -> str:
+        """Format conversation exchanges as plain text for the summariser."""
+        lines = []
+        for i, (user_msg, assistant_msg) in enumerate(exchanges, 1):
+            lines.append(f"User: {user_msg}")
+            lines.append(f"Assistant: {assistant_msg}")
+        return "\n\n".join(lines)
+
+    async def _run_summariser(self) -> str:
+        """Run the summariser on last 3 exchanges; merge with previous summary if present. Returns new summary."""
+        if len(self.conversation_history) < 3:
+            return self.conversation_summary
+        last_three = self.conversation_history[-3:]
+        new_turns_text = self._format_exchanges(last_three)
+        if not self.conversation_summary.strip():
+            # First run: summarise the 3 exchanges only
+            prompt = f"Summarise this conversation. Extract concrete details (travel, shopping, NPCI, other as relevant).\n\n{new_turns_text}"
+        else:
+            # Incremental: merge previous summary with new turns
+            prompt = (
+                "Merge the previous summary below with the new conversation turns.\n"
+                f"**Previous summary:**\n{self.conversation_summary}\n\n**New conversation turns:**\n{new_turns_text}"
+            )
+        try:
+            result = await self._summariser_agent.run(prompt)
+            print("\n\nresult: ", result)
+            summary = getattr(result, "output", getattr(result, "data", str(result)))
+            if summary and isinstance(summary, str):
+                self.log.info("📋 Summariser updated (length=%d chars)", len(summary))
+                return summary.strip()
+        except Exception as e:
+            self.log.warning("⚠️ Summariser failed: %s – keeping previous summary", str(e))
+        return self.conversation_summary
 
     # === MCP tool wrappers ===
     async def search_products(self, query: Annotated[str, "Product name or category"], limit: Annotated[int, "Max results"] = 5):
@@ -569,17 +622,27 @@ class UnifiedAgent:
                 self.log.error("❌ PLAN+SHOP ERROR: %s", str(e))
                 # fall through to normal agent
         
-        # Build context from conversation history
-        # Prepend previous exchanges as context to the current message
+        # Build context: if we have a summary, use summary + last 3 exchanges; else use last N exchanges
         context_parts = []
-        if self.conversation_history:
+        if self.conversation_summary.strip():
+            context_parts.append("**Conversation summary (use for info and next steps):**\n")
+            context_parts.append(self.conversation_summary.strip())
+            context_parts.append("\n\n")
+            if self.conversation_history:
+                last_three = self.conversation_history[-3:]
+                context_parts.append("**Last 3 exchanges:**\n")
+                for user_msg, assistant_msg in last_three:
+                    context_parts.append(f"User: {user_msg}\nAssistant: {assistant_msg}")
+                context_parts.append("\n\n**Current question:**\n")
+        elif self.conversation_history:
             self.log.debug("Building context from %d previous exchanges", len(self.conversation_history))
             context_parts.append("**Previous conversation:**")
-            for i, (user_msg, assistant_msg) in enumerate(self.conversation_history[-self.max_history_exchanges:], 1):
+            last_three = self.conversation_history[-3:]
+            for i, (user_msg, assistant_msg) in enumerate(last_three, 1):
                 context_parts.append(f"\n{i}. User: {user_msg}")
                 context_parts.append(f"\nAssistant: {assistant_msg}")
             context_parts.append("\n\n**Current question:**")
-        
+
         # Combine context with current message
         full_message = "".join(context_parts) + "\n" + user_message if context_parts else user_message
         # print(f"\n\n\n\nfull_message: {full_message}\n\n\n\n")
@@ -700,23 +763,30 @@ class UnifiedAgent:
             
             # Store this exchange
             self.conversation_history.append((user_message, str(assistant_response)))
-            
-            # Keep only last max_history_exchanges exchanges
-            if len(self.conversation_history) > self.max_history_exchanges:
-                removed = len(self.conversation_history) - self.max_history_exchanges
-                self.conversation_history = self.conversation_history[-self.max_history_exchanges:]
-                self.log.debug("Trimmed conversation history: removed %d old exchange(s)", removed)
-            
+
+            # Keep last max_history_for_summariser exchanges (so we can run summariser every 3)
+            if len(self.conversation_history) > self.max_history_for_summariser:
+                self.conversation_history = self.conversation_history[-self.max_history_for_summariser:]
+                self.log.debug("Trimmed conversation history to last %d exchanges", self.max_history_for_summariser)
+
+            # Run summariser every 3 turns (incremental: merge with previous summary when present)
+            if len(self.conversation_history) >= 3 and len(self.conversation_history) % 3 == 0:
+                try:
+                    self.conversation_summary = await self._run_summariser()
+                except Exception as e:
+                    self.log.warning("⚠️ Summariser failed (run): %s – keeping previous summary", str(e))
+
             return assistant_response
         except Exception as e:
             self.log.error("❌ AGENT ERROR: Failed to process user message - %s", str(e))
             raise
 
     def clear_history(self):
-        """Clear conversation history."""
+        """Clear conversation history and summary."""
         count = len(self.conversation_history)
         self.conversation_history = []
-        self.log.info("🗑️  Cleared conversation history (%d exchanges removed)", count)
+        self.conversation_summary = ""
+        self.log.info("🗑️  Cleared conversation history and summary (%d exchanges removed)", count)
 
     async def close(self):
         if self.blinkit_client:

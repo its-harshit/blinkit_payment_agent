@@ -358,75 +358,6 @@ const MOCK_HOTELS = [
 
 const HOTEL_BOOKINGS = new Map(); // hotelBookingId -> booking object
 
-// --- Trips (link flight + hotel + cab for one itinerary) --------------------
-
-const TRIPS = new Map(); // tripId -> trip object
-
-const AIRPORT_NAMES = {
-  GOA: "Goa Dabolim Airport (GOA)",
-  DEL: "Indira Gandhi International Airport (DEL)",
-  BOM: "Chhatrapati Shivaji Maharaj International Airport (BOM)",
-  BLR: "Kempegowda International Airport (BLR)",
-};
-
-function getAirportName(code) {
-  return AIRPORT_NAMES[normalizeCode(code)] || `${code} Airport`;
-}
-
-function createTrip(params) {
-  const city = params.city ? normalizeCode(params.city) : null;
-  const tripId = `TRIP-${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
-  const trip = {
-    tripId,
-    city,
-    flightBookingId: null,
-    hotelBookingId: null,
-    cabBookingIds: [],
-    createdAt: new Date().toISOString(),
-  };
-  TRIPS.set(tripId, trip);
-  return { trip: { tripId, city: trip.city } };
-}
-
-function getTrip(tripId) {
-  const trip = TRIPS.get(tripId);
-  if (!trip) throw new Error(`Unknown tripId: ${tripId}`);
-
-  let flightBooking = null;
-  let flight = null;
-  if (trip.flightBookingId) {
-    flightBooking = getBookingStatus(trip.flightBookingId);
-    flight = getFlightById(flightBooking.flightId);
-  }
-
-  let hotelBooking = null;
-  let hotel = null;
-  if (trip.hotelBookingId) {
-    hotelBooking = getHotelBookingStatus(trip.hotelBookingId);
-    hotel = getHotelById(hotelBooking.hotelId);
-  }
-
-  const cabBookings = (trip.cabBookingIds || []).map((id) => getCabBookingStatus(id));
-
-  return {
-    trip: {
-      tripId: trip.tripId,
-      city: trip.city,
-      flightBooking: flightBooking ? { ...flightBooking, flight } : null,
-      hotelBooking: hotelBooking ? { ...hotelBooking, hotel } : null,
-      cabBookings,
-    },
-  };
-}
-
-function linkBookingToTrip(tripId, kind, id) {
-  const trip = TRIPS.get(tripId);
-  if (!trip) return;
-  if (kind === "flight") trip.flightBookingId = id;
-  else if (kind === "hotel") trip.hotelBookingId = id;
-  else if (kind === "cab") trip.cabBookingIds.push(id);
-}
-
 // --- Cab (same-city, Uber-like, always available) ---------------------------
 
 const CAB_TYPES = [
@@ -438,35 +369,9 @@ const CAB_TYPES = [
 const CAB_BOOKINGS = new Map(); // cabBookingId -> booking object
 
 function searchCabs(params) {
-  let origin = String(params.origin || "").trim();
-  let destination = String(params.destination || "").trim();
-  let city = normalizeCode(params.city || "");
-
-  // Trip-based: resolve origin/destination/city from trip's flight and hotel
-  if (params.tripId && params.segment) {
-    const trip = TRIPS.get(params.tripId);
-    if (!trip) throw new Error(`Unknown tripId: ${params.tripId}`);
-    if (!trip.flightBookingId) throw new Error("Trip has no flight booking yet");
-    if (!trip.hotelBookingId) throw new Error("Trip has no hotel booking yet");
-    const flightBooking = getBookingStatus(trip.flightBookingId);
-    const flight = getFlightById(flightBooking.flightId);
-    const hotelBooking = getHotelBookingStatus(trip.hotelBookingId);
-    const hotel = getHotelById(hotelBooking.hotelId);
-    const airportName = getAirportName(flight.destination);
-    const hotelAddress = hotel ? `${hotel.name}, ${hotel.address}` : hotelBooking.hotelName;
-    const destCity = flight.destination;
-    if (params.segment === "airport_to_hotel") {
-      origin = airportName;
-      destination = hotelAddress;
-      city = destCity;
-    } else if (params.segment === "hotel_to_airport") {
-      origin = hotelAddress;
-      destination = airportName;
-      city = destCity;
-    } else {
-      throw new Error(`Unknown segment: ${params.segment}. Use airport_to_hotel or hotel_to_airport.`);
-    }
-  }
+  const origin = String(params.origin || "").trim();
+  const destination = String(params.destination || "").trim();
+  const city = normalizeCode(params.city || "");
 
   if (!origin || !destination) {
     throw new Error("origin and destination are required for cab search");
@@ -499,7 +404,7 @@ function searchCabs(params) {
 }
 
 function bookCab(params) {
-  const { cabId, passengerName, contact, origin, destination, city, tripId } = params;
+  const { cabId, passengerName, contact, origin, destination, city } = params;
   if (!cabId || !passengerName || !contact) {
     throw new Error("cabId, passengerName, and contact are required");
   }
@@ -535,7 +440,6 @@ function bookCab(params) {
     createdAt: new Date().toISOString(),
   };
   CAB_BOOKINGS.set(cabBookingId, booking);
-  if (params.tripId) linkBookingToTrip(params.tripId, "cab", cabBookingId);
   return booking;
 }
 
@@ -602,7 +506,7 @@ function getFlightById(flightId) {
 }
 
 function createBooking(params) {
-  const { flightId, passengerName, contactEmail, tripId } = params;
+  const { flightId, passengerName, contactEmail } = params;
   const flight = getFlightById(flightId);
   if (!flight) {
     throw new Error(`Unknown flightId: ${flightId}`);
@@ -622,7 +526,6 @@ function createBooking(params) {
   };
 
   BOOKINGS.set(bookingId, booking);
-  if (tripId) linkBookingToTrip(tripId, "flight", bookingId);
   return booking;
 }
 
@@ -660,7 +563,7 @@ function getHotelById(hotelId) {
 }
 
 function createHotelBooking(params) {
-  const { hotelId, guestName, contactEmail, checkIn, checkOut, guests = 1, tripId } = params;
+  const { hotelId, guestName, contactEmail, checkIn, checkOut, guests = 1 } = params;
   const hotel = getHotelById(hotelId);
   if (!hotel) throw new Error(`Unknown hotelId: ${hotelId}`);
   const cIn = normalizeDate(checkIn);
@@ -673,7 +576,6 @@ function createHotelBooking(params) {
     hotelId: hotel.hotelId,
     hotelName: hotel.name,
     city: hotel.city,
-    address: hotel.address,
     guestName,
     contactEmail,
     checkIn: cIn,
@@ -685,7 +587,6 @@ function createHotelBooking(params) {
     createdAt: new Date().toISOString(),
   };
   HOTEL_BOOKINGS.set(bookingId, booking);
-  if (tripId) linkBookingToTrip(tripId, "hotel", bookingId);
   return booking;
 }
 
@@ -698,28 +599,6 @@ function getHotelBookingStatus(hotelBookingId) {
 // --- MCP tools metadata -------------------------------------------------------
 
 const tools = [
-  {
-    name: "travel.create_trip",
-    description: "Create a new trip (itinerary) to link flight, hotel, and cab bookings. Call when user starts a multi-step travel booking.",
-    input_schema: {
-      type: "object",
-      properties: {
-        city: { type: "string", description: "Optional destination city code (e.g., GOA, DEL)" },
-      },
-      required: [],
-    },
-  },
-  {
-    name: "travel.get_trip",
-    description: "Get trip summary: flight booking, hotel booking, cab bookings. Use when user asks what's in their trip or what's next.",
-    input_schema: {
-      type: "object",
-      properties: {
-        tripId: { type: "string", description: "Trip ID from create_trip" },
-      },
-      required: ["tripId"],
-    },
-  },
   {
     name: "travel.search_flights",
     description: "Search mock flights between two cities on a given date",
@@ -753,7 +632,6 @@ const tools = [
         flightId: { type: "string", description: "Flight ID to book" },
         passengerName: { type: "string", description: "Passenger full name" },
         contactEmail: { type: "string", description: "Passenger email" },
-        tripId: { type: "string", description: "Optional trip ID from create_trip to link this booking" },
       },
       required: ["flightId", "passengerName", "contactEmail"],
     },
@@ -807,7 +685,6 @@ const tools = [
         checkIn: { type: "string", description: "Check-in date YYYY-MM-DD" },
         checkOut: { type: "string", description: "Check-out date YYYY-MM-DD" },
         guests: { type: "number", description: "Number of guests (default 1)" },
-        tripId: { type: "string", description: "Optional trip ID from create_trip to link this booking" },
       },
       required: ["hotelId", "guestName", "contactEmail", "checkIn", "checkOut"],
     },
@@ -825,32 +702,29 @@ const tools = [
   },
   {
     name: "travel.search_cabs",
-    description: "Search cab options. Either (origin, destination, city) for standalone, or (tripId, segment) for trip: segment airport_to_hotel or hotel_to_airport.",
+    description: "Search cab options between two places within a city (same-city only, Uber-like)",
     input_schema: {
       type: "object",
       properties: {
-        origin: { type: "string", description: "Pickup place (standalone cab)" },
-        destination: { type: "string", description: "Drop place (standalone cab)" },
-        city: { type: "string", description: "City code (standalone cab)" },
-        tripId: { type: "string", description: "Trip ID (when part of trip flow)" },
-        segment: { type: "string", description: "airport_to_hotel or hotel_to_airport (with tripId)" },
+        origin: { type: "string", description: "Pickup place name or address" },
+        destination: { type: "string", description: "Drop place name or address" },
+        city: { type: "string", description: "City code (e.g., DEL, BOM, GOA, BLR)" },
       },
-      required: [],
+      required: ["origin", "destination", "city"],
     },
   },
   {
     name: "travel.book_cab",
-    description: "Book a selected cab by cabId. Pass origin, destination, city from search so fare/ETA match. Pass tripId to link to trip.",
+    description: "Book a selected cab by cabId. Pass origin, destination, city from the search result so fare and ETA match.",
     input_schema: {
       type: "object",
       properties: {
         cabId: { type: "string", description: "Cab ID from search_cabs (e.g., CAB-DEL-100)" },
         passengerName: { type: "string", description: "Passenger full name" },
         contact: { type: "string", description: "Passenger phone or email" },
-        origin: { type: "string", description: "Same pickup as in search_cabs (so fare/ETA match)" },
-        destination: { type: "string", description: "Same drop as in search_cabs" },
+        origin: { type: "string", description: "Same pickup place as in search_cabs (so fare/ETA match)" },
+        destination: { type: "string", description: "Same drop place as in search_cabs" },
         city: { type: "string", description: "Same city as in search_cabs" },
-        tripId: { type: "string", description: "Optional trip ID to link this cab booking" },
       },
       required: ["cabId", "passengerName", "contact"],
     },
@@ -924,18 +798,6 @@ rl.on("line", (line) => {
 
         let content;
         switch (name) {
-          case "travel.create_trip": {
-            const createResult = createTrip(args || {});
-            content = [{ type: "text", text: JSON.stringify(createResult, null, 2) }];
-            break;
-          }
-          case "travel.get_trip": {
-            const tripId = args.tripId;
-            if (!tripId) throw new Error("tripId is required");
-            const getResult = getTrip(tripId);
-            content = [{ type: "text", text: JSON.stringify(getResult, null, 2) }];
-            break;
-          }
           case "travel.search_flights": {
             const flights = findFlights(args || {});
             content = [{ type: "text", text: JSON.stringify({ flights }, null, 2) }];
