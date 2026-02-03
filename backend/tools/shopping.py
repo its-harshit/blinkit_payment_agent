@@ -318,6 +318,48 @@ def make_shopping_tools(agent: Any):
             agent.log.error("❌ TOOL ERROR: clear_cart failed - %s", str(e))
             raise
 
+    async def list_blinkit_discounts_tool(
+        ctx: RunContext,
+        amount: Annotated[float, "Cart/order total in INR"],
+        order_id: Annotated[str | None, "Optional order id"] = None,
+    ):
+        """List Blinkit promo codes eligible for this cart total. Call before create_payment at checkout; show options to user and use apply_blinkit_discount_tool if they pick one."""
+        agent.log.info("🏷️  TOOL CALL: list_blinkit_discounts_tool(amount=₹%.2f)", amount)
+        try:
+            await agent._ensure_blinkit()
+            params = {"amount": amount}
+            if order_id:
+                params["orderId"] = order_id
+            result = await agent.blinkit_client.call_tool("blinkit.list_discounts", params)
+            data = parse_mcp_text_result(result)
+            discounts = data.get("discounts", [])
+            agent.log.info("✅ TOOL SUCCESS: list_blinkit_discounts_tool - %d eligible", len(discounts))
+            return data
+        except Exception as e:
+            agent.log.error("❌ TOOL ERROR: list_blinkit_discounts_tool failed - %s", str(e))
+            raise
+
+    async def apply_blinkit_discount_tool(
+        ctx: RunContext,
+        code: Annotated[str, "Discount code (e.g. FIRST50, BLINK10)"],
+        amount: Annotated[float, "Order total in INR before discount"],
+        order_id: Annotated[str | None, "Optional order id"] = None,
+    ):
+        """Apply a Blinkit discount code; returns valid, finalAmount, message. Use finalAmount in create_payment if valid."""
+        agent.log.info("🏷️  TOOL CALL: apply_blinkit_discount_tool(code=%s, amount=₹%.2f)", code, amount)
+        try:
+            await agent._ensure_blinkit()
+            params = {"code": code, "amount": amount}
+            if order_id:
+                params["orderId"] = order_id
+            result = await agent.blinkit_client.call_tool("blinkit.apply_discount", params)
+            data = parse_mcp_text_result(result)
+            agent.log.info("✅ TOOL SUCCESS: apply_blinkit_discount_tool - valid=%s, finalAmount=₹%.2f", data.get("valid"), data.get("finalAmount", 0))
+            return data
+        except Exception as e:
+            agent.log.error("❌ TOOL ERROR: apply_blinkit_discount_tool failed - %s", str(e))
+            raise
+
     async def plan_recipe_ingredients_tool(
         ctx: RunContext,
         recipe_text: Annotated[str, "Recipe or dish name (e.g., 'biryani', 'dosa', 'chole bhature')"],
@@ -356,5 +398,7 @@ def make_shopping_tools(agent: Any):
         add_items_to_cart_by_ids,
         view_cart,
         clear_cart,
+        list_blinkit_discounts_tool,
+        apply_blinkit_discount_tool,
         plan_recipe_ingredients_tool,
     ]

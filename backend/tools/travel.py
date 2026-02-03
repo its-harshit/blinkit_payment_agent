@@ -243,6 +243,51 @@ def make_travel_tools(agent: Any):
             agent.log.error("❌ TOOL ERROR: get_hotel_booking_status_tool failed - %s", str(e))
             raise
 
+    async def list_travel_discounts_tool(
+        ctx: RunContext,
+        amount: Annotated[float, "Booking total in INR"],
+        order_id: Annotated[str | None, "Optional booking/order id"] = None,
+        booking_type: Annotated[str | None, "Optional: flight, hotel, or cab to filter offers"] = None,
+    ):
+        """List travel discount codes eligible for this booking amount. Call before create_payment; show options and use apply_travel_discount_tool if user picks one."""
+        agent.log.info("🏷️  TOOL CALL: list_travel_discounts_tool(amount=₹%.2f)", amount)
+        try:
+            await agent._ensure_travel()
+            params = {"amount": amount}
+            if order_id:
+                params["orderId"] = order_id
+            if booking_type:
+                params["type"] = booking_type
+            result = await agent.travel_client.call_tool("travel.list_discounts", params)
+            data = parse_mcp_text_result(result)
+            discounts = data.get("discounts", [])
+            agent.log.info("✅ TOOL SUCCESS: list_travel_discounts_tool - %d eligible", len(discounts))
+            return data
+        except Exception as e:
+            agent.log.error("❌ TOOL ERROR: list_travel_discounts_tool failed - %s", str(e))
+            raise
+
+    async def apply_travel_discount_tool(
+        ctx: RunContext,
+        code: Annotated[str, "Discount code (e.g. FLY200, STAY15, CAB50)"],
+        amount: Annotated[float, "Booking total in INR before discount"],
+        order_id: Annotated[str | None, "Optional booking id"] = None,
+    ):
+        """Apply a travel discount code; returns valid, finalAmount, message. Use finalAmount in create_payment if valid."""
+        agent.log.info("🏷️  TOOL CALL: apply_travel_discount_tool(code=%s, amount=₹%.2f)", code, amount)
+        try:
+            await agent._ensure_travel()
+            params = {"code": code, "amount": amount}
+            if order_id:
+                params["orderId"] = order_id
+            result = await agent.travel_client.call_tool("travel.apply_discount", params)
+            data = parse_mcp_text_result(result)
+            agent.log.info("✅ TOOL SUCCESS: apply_travel_discount_tool - valid=%s, finalAmount=₹%.2f", data.get("valid"), data.get("finalAmount", 0))
+            return data
+        except Exception as e:
+            agent.log.error("❌ TOOL ERROR: apply_travel_discount_tool failed - %s", str(e))
+            raise
+
     return [
         search_flights_tool,
         get_flight_tool,
@@ -252,4 +297,6 @@ def make_travel_tools(agent: Any):
         get_hotel_tool,
         hold_hotel_booking_tool,
         get_hotel_booking_status_tool,
+        list_travel_discounts_tool,
+        apply_travel_discount_tool,
     ]

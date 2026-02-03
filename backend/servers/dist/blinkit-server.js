@@ -247,6 +247,31 @@ const tools = [
       properties: {},
       additionalProperties: false
     }
+  },
+  {
+    name: "blinkit.list_discounts",
+    description: "List Blinkit promo codes eligible for the given cart/order amount (use at checkout)",
+    input_schema: {
+      type: "object",
+      properties: {
+        amount: { type: "number", description: "Order/cart total in INR" },
+        orderId: { type: "string", description: "Optional order id" }
+      },
+      required: ["amount"]
+    }
+  },
+  {
+    name: "blinkit.apply_discount",
+    description: "Apply a Blinkit discount code and get the final amount to pay",
+    input_schema: {
+      type: "object",
+      properties: {
+        code: { type: "string", description: "Discount code (e.g. FIRST50, BLINK10)" },
+        amount: { type: "number", description: "Order total in INR before discount" },
+        orderId: { type: "string", description: "Optional order id" }
+      },
+      required: ["code", "amount"]
+    }
   }
 ];
 
@@ -336,6 +361,38 @@ function clearCart() {
   return { cleared: true, itemsRemoved: itemCount };
 }
 
+// --- Blinkit discounts (domain-specific, applied at checkout) -----------------
+const BLINKIT_DISCOUNTS = [
+  { code: "FIRST50", description: "₹50 off on orders above ₹300", minAmount: 300, type: "flat", value: 50 },
+  { code: "BLINK10", description: "10% off on orders above ₹500", minAmount: 500, type: "percent", value: 10 },
+  { code: "SAVE100", description: "₹100 off on orders above ₹1000", minAmount: 1000, type: "flat", value: 100 },
+];
+
+function listBlinkitDiscounts(amount, orderId) {
+  const amt = Number(amount) || 0;
+  const eligible = BLINKIT_DISCOUNTS.filter((d) => amt >= d.minAmount).map((d) => {
+    let discountAmount = 0;
+    if (d.type === "flat") discountAmount = Math.min(d.value, amt);
+    else if (d.type === "percent") discountAmount = Math.round((amt * d.value) / 100);
+    const finalAmount = Math.max(0, amt - discountAmount);
+    return { code: d.code, description: d.description, discountAmount, finalAmount, originalAmount: amt };
+  });
+  return { discounts: eligible };
+}
+
+function applyBlinkitDiscount(code, amount, orderId) {
+  const amt = Number(amount) || 0;
+  const discount = BLINKIT_DISCOUNTS.find((d) => d.code === (code || "").trim().toUpperCase());
+  if (!discount || amt < discount.minAmount) {
+    return { valid: false, finalAmount: amt, message: discount ? `Minimum order ₹${discount.minAmount} for ${discount.code}` : "Invalid or expired code" };
+  }
+  let discountAmount = 0;
+  if (discount.type === "flat") discountAmount = Math.min(discount.value, amt);
+  else if (discount.type === "percent") discountAmount = Math.round((amt * discount.value) / 100);
+  const finalAmount = Math.max(0, amt - discountAmount);
+  return { valid: true, finalAmount, discountAmount, message: `${discount.code} applied. You pay ₹${finalAmount}` };
+}
+
 function respond(id, result) {
   process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n");
 }
@@ -398,6 +455,16 @@ rl.on("line", (line) => {
           }
           case "blinkit.clear_cart": {
             const result = clearCart();
+            content = [{ type: "text", text: JSON.stringify(result, null, 2) }];
+            break;
+          }
+          case "blinkit.list_discounts": {
+            const result = listBlinkitDiscounts(args.amount, args.orderId);
+            content = [{ type: "text", text: JSON.stringify(result, null, 2) }];
+            break;
+          }
+          case "blinkit.apply_discount": {
+            const result = applyBlinkitDiscount(args.code, args.amount, args.orderId);
             content = [{ type: "text", text: JSON.stringify(result, null, 2) }];
             break;
           }

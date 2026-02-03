@@ -596,6 +596,45 @@ function getHotelBookingStatus(hotelBookingId) {
   return booking;
 }
 
+// --- Travel discounts (domain-specific, applied at checkout) -----------------
+const TRAVEL_DISCOUNTS = [
+  { code: "FLY200", description: "₹200 off on flight bookings above ₹3000", minAmount: 3000, type: "flight", typeAlso: ["flight"], discountType: "flat", value: 200 },
+  { code: "STAY15", description: "15% off on hotel bookings above ₹2000", minAmount: 2000, type: "hotel", typeAlso: ["hotel"], discountType: "percent", value: 15 },
+  { code: "CAB50", description: "₹50 off on cab bookings", minAmount: 100, type: "cab", typeAlso: ["cab"], discountType: "flat", value: 50 },
+  { code: "TRAVEL100", description: "₹100 off on any travel booking above ₹1500", minAmount: 1500, type: null, typeAlso: ["flight", "hotel", "cab"], discountType: "flat", value: 100 },
+];
+
+function listTravelDiscounts(amount, orderId, type) {
+  const amt = Number(amount) || 0;
+  const bookingType = (type || "").toLowerCase();
+  const eligible = TRAVEL_DISCOUNTS.filter((d) => {
+    if (amt < d.minAmount) return false;
+    if (!d.type) return true;
+    if (bookingType && d.typeAlso && !d.typeAlso.includes(bookingType)) return false;
+    return true;
+  }).map((d) => {
+    let discountAmount = 0;
+    if (d.discountType === "flat") discountAmount = Math.min(d.value, amt);
+    else if (d.discountType === "percent") discountAmount = Math.round((amt * d.value) / 100);
+    const finalAmount = Math.max(0, amt - discountAmount);
+    return { code: d.code, description: d.description, discountAmount, finalAmount, originalAmount: amt };
+  });
+  return { discounts: eligible };
+}
+
+function applyTravelDiscount(code, amount, orderId) {
+  const amt = Number(amount) || 0;
+  const discount = TRAVEL_DISCOUNTS.find((d) => d.code === (code || "").trim().toUpperCase());
+  if (!discount || amt < discount.minAmount) {
+    return { valid: false, finalAmount: amt, message: discount ? `Minimum ₹${discount.minAmount} for ${discount.code}` : "Invalid or expired code" };
+  }
+  let discountAmount = 0;
+  if (discount.discountType === "flat") discountAmount = Math.min(discount.value, amt);
+  else if (discount.discountType === "percent") discountAmount = Math.round((amt * discount.value) / 100);
+  const finalAmount = Math.max(0, amt - discountAmount);
+  return { valid: true, finalAmount, discountAmount, message: `${discount.code} applied. You pay ₹${finalAmount}` };
+}
+
 // --- MCP tools metadata -------------------------------------------------------
 
 const tools = [
@@ -740,6 +779,32 @@ const tools = [
       required: ["cabBookingId"],
     },
   },
+  {
+    name: "travel.list_discounts",
+    description: "List travel discount codes eligible for the given booking amount (use at payment)",
+    input_schema: {
+      type: "object",
+      properties: {
+        amount: { type: "number", description: "Booking total in INR" },
+        orderId: { type: "string", description: "Optional booking/order id" },
+        type: { type: "string", description: "Optional: flight, hotel, or cab to filter by booking type" },
+      },
+      required: ["amount"],
+    },
+  },
+  {
+    name: "travel.apply_discount",
+    description: "Apply a travel discount code and get the final amount to pay",
+    input_schema: {
+      type: "object",
+      properties: {
+        code: { type: "string", description: "Discount code (e.g. FLY200, STAY15, CAB50)" },
+        amount: { type: "number", description: "Booking total in INR before discount" },
+        orderId: { type: "string", description: "Optional booking id" },
+      },
+      required: ["code", "amount"],
+    },
+  },
 ];
 
 // --- JSON-RPC helpers (same shape as blinkit/payment) ------------------------
@@ -858,6 +923,16 @@ rl.on("line", (line) => {
             const cabBookingId = args.cabBookingId;
             const booking = getCabBookingStatus(cabBookingId);
             content = [{ type: "text", text: JSON.stringify({ booking }, null, 2) }];
+            break;
+          }
+          case "travel.list_discounts": {
+            const result = listTravelDiscounts(args.amount, args.orderId, args.type);
+            content = [{ type: "text", text: JSON.stringify(result, null, 2) }];
+            break;
+          }
+          case "travel.apply_discount": {
+            const result = applyTravelDiscount(args.code, args.amount, args.orderId);
+            content = [{ type: "text", text: JSON.stringify(result, null, 2) }];
             break;
           }
           default:
